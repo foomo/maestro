@@ -268,7 +268,7 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 }
 
 func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) error {
-	voteSub := goflux.BindSubscriber(s.tr.Vote.Subscriber, transport.SubjectRoundVote(rid))
+	voteSub := goflux.BindSubscriber(s.tr.Vote.Subscriber, s.tr.Subjects.RoundVote(rid))
 
 	cctx, cancel := context.WithTimeout(ctx, s.opts.CanCommitTimeout)
 	defer cancel()
@@ -278,7 +278,7 @@ func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestr
 		return fmt.Errorf("can_commit agg: %w", err)
 	}
 
-	if err := s.tr.CanCommit.Publish(ctx, transport.SubjectRoundCanCommit(rid), transport.CanCommit{
+	if err := s.tr.CanCommit.Publish(ctx, s.tr.Subjects.RoundCanCommit(rid), transport.CanCommit{
 		RoundID:        rid,
 		Gen:            gen,
 		Target:         m.Version,
@@ -299,7 +299,7 @@ func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestr
 }
 
 func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string, stageTimeout time.Duration) error {
-	stagedSub := goflux.BindSubscriber(s.tr.Staged.Subscriber, transport.SubjectRoundStaged(rid))
+	stagedSub := goflux.BindSubscriber(s.tr.Staged.Subscriber, s.tr.Subjects.RoundStaged(rid))
 
 	cctx, cancel := context.WithTimeout(ctx, stageTimeout)
 	defer cancel()
@@ -309,7 +309,7 @@ func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestr
 		return fmt.Errorf("pre_commit agg: %w", err)
 	}
 
-	if err := s.tr.PreCommit.Publish(ctx, transport.SubjectRoundPreCommit(rid), transport.PreCommit{
+	if err := s.tr.PreCommit.Publish(ctx, s.tr.Subjects.RoundPreCommit(rid), transport.PreCommit{
 		RoundID:        rid,
 		Gen:            gen,
 		Target:         m.Version,
@@ -329,7 +329,7 @@ func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestr
 }
 
 func (s *Soloist) runPhase3(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) error {
-	commitSub := goflux.BindSubscriber(s.tr.Committed.Subscriber, transport.SubjectRoundCommitted(rid))
+	commitSub := goflux.BindSubscriber(s.tr.Committed.Subscriber, s.tr.Subjects.RoundCommitted(rid))
 
 	cctx, cancel := context.WithTimeout(ctx, s.opts.DoCommitTimeout)
 	defer cancel()
@@ -339,7 +339,7 @@ func (s *Soloist) runPhase3(ctx context.Context, rid string, gen int64, m maestr
 		return fmt.Errorf("do_commit agg: %w", err)
 	}
 
-	if err := s.tr.DoCommit.Publish(ctx, transport.SubjectRoundDoCommit(rid), transport.DoCommit{
+	if err := s.tr.DoCommit.Publish(ctx, s.tr.Subjects.RoundDoCommit(rid), transport.DoCommit{
 		RoundID: rid,
 		Gen:     gen,
 		Target:  m.Version,
@@ -427,7 +427,7 @@ func (s *Soloist) publishAbort(ctx context.Context, rid string, gen int64, reaso
 	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.opts.CanCommitTimeout)
 	defer cancel()
 
-	_ = s.tr.Abort.Publish(pubCtx, transport.SubjectRoundAbort(rid), transport.Abort{
+	_ = s.tr.Abort.Publish(pubCtx, s.tr.Subjects.RoundAbort(rid), transport.Abort{
 		RoundID: rid, Gen: gen, Reason: reason,
 	})
 }
@@ -475,7 +475,7 @@ func (s *Soloist) tryResync(ctx context.Context) {
 }
 
 func (s *Soloist) subscribeHeartbeats(ctx context.Context) error {
-	return s.tr.Heartbeat.Subscribe(ctx, transport.SubjectPlayerHeartbeat,
+	return s.tr.Heartbeat.Subscribe(ctx, s.tr.Subjects.PlayerHeartbeat(),
 		func(_ context.Context, msg goflux.Message[transport.Heartbeat]) error {
 			s.roster.Observe(msg.Payload)
 			return nil

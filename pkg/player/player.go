@@ -159,7 +159,7 @@ func (p *Player) Wired() bool { return p.wired.Load() }
 
 func (p *Player) handleCanCommit(ctx context.Context, rid string, cc transport.CanCommit) {
 	reply := transport.Vote{RoundID: cc.RoundID, InstanceID: p.opts.InstanceID, OK: true}
-	subj := transport.SubjectRoundVote(cc.RoundID)
+	subj := p.tr.Subjects.RoundVote(cc.RoundID)
 
 	p.l.Info("can_commit received",
 		zap.String("rid", cc.RoundID),
@@ -195,7 +195,7 @@ func (p *Player) handleCanCommit(ctx context.Context, rid string, cc transport.C
 
 func (p *Player) handlePreCommit(ctx context.Context, pc transport.PreCommit) {
 	reply := transport.Staged{RoundID: pc.RoundID, InstanceID: p.opts.InstanceID, OK: true}
-	subj := transport.SubjectRoundStaged(pc.RoundID)
+	subj := p.tr.Subjects.RoundStaged(pc.RoundID)
 
 	p.l.Info("pre_commit received",
 		zap.String("rid", pc.RoundID),
@@ -255,7 +255,7 @@ func (p *Player) handlePreCommit(ctx context.Context, pc transport.PreCommit) {
 
 func (p *Player) handleDoCommit(ctx context.Context, dc transport.DoCommit) {
 	reply := transport.Committed{RoundID: dc.RoundID, InstanceID: p.opts.InstanceID, OK: true}
-	subj := transport.SubjectRoundCommitted(dc.RoundID)
+	subj := p.tr.Subjects.RoundCommitted(dc.RoundID)
 
 	p.l.Info("do_commit received",
 		zap.String("rid", dc.RoundID),
@@ -362,7 +362,7 @@ func (p *Player) runHeartbeat(ctx context.Context) error {
 func (p *Player) emitHeartbeat(ctx context.Context) {
 	cur := p.CurrentVersion()
 
-	if err := p.tr.Heartbeat.Publish(ctx, transport.SubjectPlayerHeartbeat, transport.Heartbeat{
+	if err := p.tr.Heartbeat.Publish(ctx, p.tr.Subjects.PlayerHeartbeat(), transport.Heartbeat{
 		InstanceID:     p.opts.InstanceID,
 		GenAcked:       0,
 		CurrentVersion: cur,
@@ -380,9 +380,9 @@ func (p *Player) emitHeartbeat(ctx context.Context) {
 func (p *Player) subscribeCanCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "can_commit"))
 
-	return p.tr.CanCommit.Subscribe(ctx, transport.SubjectRoundCanCommitWildcard,
+	return p.tr.CanCommit.Subscribe(ctx, p.tr.Subjects.RoundCanCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.CanCommit]) error {
-			p.handleCanCommit(hctx, transport.RIDFromSubject(m.Subject), m.Payload)
+			p.handleCanCommit(hctx, p.tr.Subjects.RIDFromSubject(m.Subject), m.Payload)
 			return nil
 		})
 }
@@ -390,7 +390,7 @@ func (p *Player) subscribeCanCommit(ctx context.Context) error {
 func (p *Player) subscribePreCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "pre_commit"))
 
-	return p.tr.PreCommit.Subscribe(ctx, transport.SubjectRoundPreCommitWildcard,
+	return p.tr.PreCommit.Subscribe(ctx, p.tr.Subjects.RoundPreCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.PreCommit]) error {
 			p.handlePreCommit(hctx, m.Payload)
 			return nil
@@ -400,7 +400,7 @@ func (p *Player) subscribePreCommit(ctx context.Context) error {
 func (p *Player) subscribeDoCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "do_commit"))
 
-	return p.tr.DoCommit.Subscribe(ctx, transport.SubjectRoundDoCommitWildcard,
+	return p.tr.DoCommit.Subscribe(ctx, p.tr.Subjects.RoundDoCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.DoCommit]) error {
 			p.handleDoCommit(hctx, m.Payload)
 			return nil
@@ -410,9 +410,9 @@ func (p *Player) subscribeDoCommit(ctx context.Context) error {
 func (p *Player) subscribeAbort(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "abort"))
 
-	return p.tr.Abort.Subscribe(ctx, transport.SubjectRoundAbortWildcard,
+	return p.tr.Abort.Subscribe(ctx, p.tr.Subjects.RoundAbortWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.Abort]) error {
-			p.handleAbort(hctx, m.Payload, transport.RIDFromSubject(m.Subject))
+			p.handleAbort(hctx, m.Payload, p.tr.Subjects.RIDFromSubject(m.Subject))
 			return nil
 		})
 }

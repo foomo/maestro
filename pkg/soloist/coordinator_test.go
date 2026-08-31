@@ -79,7 +79,7 @@ func newFakePlayer(t *testing.T, url, id string) *fakePlayer {
 				ver := p.currentVer
 				p.currentVerM.Unlock()
 
-				_ = p.tr.Heartbeat.Publish(context.Background(), transport.SubjectPlayerHeartbeat, transport.Heartbeat{
+				_ = p.tr.Heartbeat.Publish(context.Background(), p.tr.Subjects.PlayerHeartbeat(), transport.Heartbeat{
 					InstanceID:     id,
 					CurrentVersion: ver,
 				})
@@ -89,9 +89,9 @@ func newFakePlayer(t *testing.T, url, id string) *fakePlayer {
 
 	// CanCommit -> Vote OK
 	p.wg.Go(func() {
-		_ = p.tr.CanCommit.Subscribe(ctx, transport.SubjectRoundCanCommitWildcard, func(_ context.Context, m goflux.Message[transport.CanCommit]) error {
-			rid := transport.RIDFromSubject(m.Subject)
-			_ = p.tr.Vote.Publish(context.Background(), transport.SubjectRoundVote(rid),
+		_ = p.tr.CanCommit.Subscribe(ctx, p.tr.Subjects.RoundCanCommitWildcard(), func(_ context.Context, m goflux.Message[transport.CanCommit]) error {
+			rid := p.tr.Subjects.RIDFromSubject(m.Subject)
+			_ = p.tr.Vote.Publish(context.Background(), p.tr.Subjects.RoundVote(rid),
 				transport.Vote{RoundID: rid, InstanceID: id, OK: true})
 
 			return nil
@@ -100,9 +100,9 @@ func newFakePlayer(t *testing.T, url, id string) *fakePlayer {
 
 	// PreCommit -> Staged OK
 	p.wg.Go(func() {
-		_ = p.tr.PreCommit.Subscribe(ctx, transport.SubjectRoundPreCommitWildcard, func(_ context.Context, m goflux.Message[transport.PreCommit]) error {
-			rid := transport.RIDFromSubject(m.Subject)
-			_ = p.tr.Staged.Publish(context.Background(), transport.SubjectRoundStaged(rid),
+		_ = p.tr.PreCommit.Subscribe(ctx, p.tr.Subjects.RoundPreCommitWildcard(), func(_ context.Context, m goflux.Message[transport.PreCommit]) error {
+			rid := p.tr.Subjects.RIDFromSubject(m.Subject)
+			_ = p.tr.Staged.Publish(context.Background(), p.tr.Subjects.RoundStaged(rid),
 				transport.Staged{RoundID: rid, InstanceID: id, OK: true})
 
 			return nil
@@ -111,14 +111,14 @@ func newFakePlayer(t *testing.T, url, id string) *fakePlayer {
 
 	// DoCommit -> Committed OK + record current version
 	p.wg.Go(func() {
-		_ = p.tr.DoCommit.Subscribe(ctx, transport.SubjectRoundDoCommitWildcard, func(_ context.Context, m goflux.Message[transport.DoCommit]) error {
-			rid := transport.RIDFromSubject(m.Subject)
+		_ = p.tr.DoCommit.Subscribe(ctx, p.tr.Subjects.RoundDoCommitWildcard(), func(_ context.Context, m goflux.Message[transport.DoCommit]) error {
+			rid := p.tr.Subjects.RIDFromSubject(m.Subject)
 
 			p.currentVerM.Lock()
 			p.currentVer = m.Payload.Target
 			p.currentVerM.Unlock()
 
-			_ = p.tr.Committed.Publish(context.Background(), transport.SubjectRoundCommitted(rid),
+			_ = p.tr.Committed.Publish(context.Background(), p.tr.Subjects.RoundCommitted(rid),
 				transport.Committed{RoundID: rid, InstanceID: id, OK: true})
 
 			return nil
