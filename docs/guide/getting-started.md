@@ -207,12 +207,15 @@ func (h *memHandler) Abort(_ context.Context, v maestro.Version) error {
 }
 ```
 
-Since only one player was in the roster when `Publish` was called (and it
-had already heartbeated in), this ran a full 3PC round: `CanCommit` →
-`PreCommit` (download + `Stage`) → `DoCommit` (`Activate`). If the roster
-had been empty at publish time, the Soloist would have taken the
-[silent-commit](/guide/core-concepts#silent-commit) path instead, and the
-Player would pick it up on its next resync.
+Since only one player was in the roster when `Publish` was called — and it
+had heartbeated in *and* reported itself
+[wired](/guide/core-concepts#the-roster) — this ran a full 3PC round:
+`CanCommit` → `PreCommit` (download + `Stage`) → `DoCommit` (`Activate`).
+That is why the loop above waits for `pl.Wired()` before publishing.
+
+If the roster had been empty at publish time, the Soloist would have taken
+the [silent-commit](/guide/core-concepts#silent-commit) path instead, and
+the Player would pick it up on its next resync.
 
 ## Next
 

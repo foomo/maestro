@@ -79,11 +79,17 @@ artifact for the round calls
 `StageHandler.Abort(v)` to discard it. Phase 3 failures (slow / missing
 `Committed` replies) are not aborted — the soloist marks the player dirty for the next resync.
 
-**Silent commit.** If the roster is empty at `Publish` time, the soloist skips 3PC and writes `currentVersion` directly.
-Late-joining players resync.
+**Expected set.** A round targets the players that are alive *and* wired — heartbeating within `HeartbeatWindow` with
+their round subscriptions acknowledged by the broker. A player still starting up advertises `Heartbeat.NotWired` and is
+left out rather than aborting the round for everyone; it resyncs once ready. Among the players that can vote, every
+phase is unanimous: one `ok=false` or one silence aborts the round.
 
-**Resync.** Every `RosterScanTick`, the soloist scans heartbeats. Any player whose `currentVersion` differs from
-`Current()` is targeted with a fresh 3PC round, debounced by `ResyncDebounce`.
+**Silent commit.** If the roster is empty at `Publish` time, the soloist skips 3PC and writes `currentVersion` directly.
+Late-joining players resync. If players *are* present but none is wired yet, `Publish` fails instead — committing
+silently would advance past a version they never saw.
+
+**Resync.** Every `RosterScanTick`, the soloist scans heartbeats. Any alive, wired player whose `currentVersion` differs
+from `Current()` is targeted with a fresh 3PC round, debounced by `ResyncDebounce`.
 
 ## Implementation guide
 
@@ -195,9 +201,10 @@ _ = json.NewEncoder(w).Encode(c)
 svr.Run()
 ```
 
-Gate both probes on `Wired()` (subscribers + heartbeat running). Not
-`Ready()` — `Ready()` flips only after the first `DoCommit` lands, so a cold cluster (soloist restarted, no `Publish`
-yet) leaves the pod permanently NotReady. Surface "no data yet" through the public HTTP handler instead.
+Gate both probes on `Wired()` — true once the broker has acknowledged every round subscription, i.e. the player will
+receive the next round. Not `Ready()` — `Ready()` flips only after the first `DoCommit` lands, so a cold cluster
+(soloist restarted, no `Publish` yet) leaves the pod permanently NotReady. Surface "no data yet" through the public
+HTTP handler instead.
 
 ### 3. Wire a Soloist into a foomo/keel server
 
@@ -271,9 +278,10 @@ All three of Player, Soloist, and Transport accept a `*zap.Logger`, OTel
 
 ## Operational notes
 
-- **Heartbeat-before-subscribe race.** A fresh player publishes its first heartbeat before its subscribers finish
-  wiring; the first resync round targeting it may miss replies. The soloist's debounced resync (next attempt ≥
-  `ResyncDebounce` later) catches it. Nothing to do.
+- **Heartbeat-before-subscribe.** A fresh player publishes its first heartbeat before its subscribers finish wiring, so
+  for a moment it is in the roster but cannot answer a round. It advertises this (`Heartbeat.NotWired`) and the soloist
+  leaves it out of the `expected` set until its subscriptions are live, then resyncs it. Without that gate every
+  rolling replica would abort publishes fleet-wide while it started. Nothing to do.
 - **Soloist restart loses `currentVersion`.** New players become `Wired()`
   but never `Ready()` until the next `Publish`. If cold-start data is required, have your soloist `Publish` on boot from
   a persistent source.

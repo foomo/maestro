@@ -92,25 +92,75 @@ sets `currentVersion` directly. This is the common case for the very first
 publish, before any player has started. Players that join later pick up
 the version through [resync](#resync), not through a round they missed.
 
+An empty roster and a roster of only starting-up players are **not** the
+same thing. If players have heartbeated but none is [wired](#the-roster)
+yet, `Publish` returns an error instead of committing silently:
+
+```
+can_commit: 2 player(s) in the roster, none wired for rounds yet; retry once they finish starting
+```
+
+With nobody out there, a silent commit is correct — there is no one to
+diverge from. With players present but not yet able to vote, committing
+silently would advance the Soloist past a version they never saw and never
+declined, so the producer needs to hear about it and retry.
+
 ## The roster
 
 The Soloist maintains a `Roster`: a map of `InstanceID → (CurrentVersion,
-LastSeen)` built from incoming `Heartbeat` messages, published by every
-Player every `HeartbeatPeriod`. `Snapshot()` (used to compute the
-`expected` set for a round) only includes players whose last heartbeat is
-within `HeartbeatWindow` — a heartbeat-silent player simply falls out of
-the expected set rather than blocking future rounds.
+LastSeen, Wired)` built from incoming `Heartbeat` messages, published by
+every Player every `HeartbeatPeriod`. A heartbeat-silent player falls out
+of the roster once `HeartbeatWindow` elapses, rather than blocking future
+rounds.
+
+Two views of the roster serve different purposes:
+
+- **`Snapshot()`** — every player alive within `HeartbeatWindow`, wired or
+  not. This is the liveness view.
+- **`Participants()`** — the alive players that are also **wired**, i.e.
+  whose round subscriptions the broker has acknowledged. This is what
+  computes a round's `expected` set.
+
+The distinction matters because a player heartbeats before it can answer a
+round. A Player publishes its first `Heartbeat` as soon as `Start` runs,
+but its four round subscriptions become live slightly later; until they
+do, it sets `Heartbeat.NotWired` and the Soloist keeps it out of the
+`expected` set.
+
+Without that gate, every replica rolling out is briefly a single point of
+failure for publishing: it is in the roster, it cannot vote, and strict
+unanimity turns its silence into an aborted round for the whole fleet.
+Excluding it costs nothing — it has no data to lose — and [resync](#resync)
+brings it to the current version as soon as it is wired.
+
+::: tip Why "NotWired" and not "Wired"
+The wire field is negated so its zero value means *eligible*. A heartbeat
+from a player built before the field existed decodes with it absent, and
+must be treated as a full participant rather than silently excluded from
+every round.
+:::
+
+A player that claims to be wired and then does not answer is a different
+matter: that is a genuine protocol failure, indistinguishable from one
+that is about to reply, so the round aborts. Rounds stay strictly
+unanimous among the players that can actually vote.
 
 ## Resync
 
 Every `RosterScanTick`, the Soloist calls `StaleAgainst(currentVersion)` —
-any alive player whose last-reported `CurrentVersion` doesn't match gets a
-fresh, targeted 3PC round (`expected` = just the stale players), no more
-often than once per `ResyncDebounce`. This is what heals:
+any alive **and wired** player whose last-reported `CurrentVersion` doesn't
+match gets a fresh, targeted 3PC round (`expected` = just the stale
+players), no more often than once per `ResyncDebounce`. Un-wired players
+are skipped for the same reason they are left out of any other round: a
+resync round is an ordinary round, and targeting a player that cannot vote
+would just fail. They are picked up on a later tick, once wired.
+
+This is what heals:
 
 - **A newly-joined or restarted player.** It shows up in the roster on
-  `HeartbeatPeriod`, reports its (possibly empty) `CurrentVersion`, and if
-  that doesn't match `Current()`, gets targeted on the next scan tick.
+  `HeartbeatPeriod`, reports its (possibly empty) `CurrentVersion`, and
+  once it is wired and that doesn't match `Current()`, gets targeted on
+  the next scan tick.
 - **A player marked dirty after a phase-3 timeout** (see above) — same
   mechanism, it's just already been flagged.
 

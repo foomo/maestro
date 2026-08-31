@@ -28,7 +28,7 @@ actually gates.
 | `Transport` | `transport.Transport` | — | **Required.** Build via `transport.NewTransport(nc)`. |
 | `BlobStore` | `blobstore.BlobStore` | — | **Required.** |
 | `InstanceID` | `string` | — | Not part of the protocol's identity scheme; used for logging. |
-| `HeartbeatWindow` | `time.Duration` | `15s` | A player is "alive" (included in round targeting) if a heartbeat arrived within this window. |
+| `HeartbeatWindow` | `time.Duration` | `15s` | A player is "alive" if a heartbeat arrived within this window. Round targeting additionally requires it to be *wired* — see [The roster](/guide/core-concepts#the-roster). |
 | `RosterScanTick` | `time.Duration` | `5s` | How often the resync loop checks for stale players. |
 | `ResyncDebounce` | `time.Duration` | `10s` | Minimum gap between two resync rounds. |
 | `CanCommitTimeout` | `time.Duration` | `10s` | Phase 1 deadline. Timeout aborts the round. |
@@ -37,6 +37,17 @@ actually gates.
 | `MeterProvider` | `metric.MeterProvider` | `otel.GetMeterProvider()` | OTel metrics. |
 | `TracerProvider` | `trace.TracerProvider` | `otel.GetTracerProvider()` | OTel tracing. |
 | `Logger` | `*zap.Logger` | `zap.NewNop()` | |
+
+## Player state predicates
+
+| Method | True when | Use for |
+|---|---|---|
+| `Wired()` | The broker has acknowledged all four round subscriptions. The player will receive the next round. | Kubernetes readiness probe. See [Keel integration](/guide/keel-integration#gate-readiness-on-wired-not-ready). |
+| `Ready()` | The first `DoCommit` has succeeded — the player has activated *some* version. | "Do I have data yet?" in your own handler. Not a pod-health signal. |
+
+Until `Wired()` is true the player heartbeats with `Heartbeat.NotWired` and
+the Soloist leaves it out of round targeting, so a starting pod cannot
+abort a publish for its peers.
 
 ## Errors
 

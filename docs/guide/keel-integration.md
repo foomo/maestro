@@ -54,11 +54,17 @@ svr.Run()
 
 ### Gate readiness on `Wired()`, not `Ready()`
 
-This is the one detail worth internalizing: `Player.Wired()` flips once
-`Start` has subscribed to every protocol topic and sent an initial
-heartbeat — it means the player is a live, reachable participant.
+This is the one detail worth internalizing: `Player.Wired()` flips once the
+broker has **acknowledged** every round subscription — not merely once
+`Subscribe` was called. It means the player is a live, reachable
+participant that will receive the next round, which is exactly what the
+Soloist needs before counting it as a voter.
 `Player.Ready()` flips only after the **first successful `DoCommit`** —
 i.e. once the player has actually activated *some* version.
+
+Until `Wired()` is true the player heartbeats with `NotWired`, and the
+Soloist deliberately leaves it out of round targeting — so a pod that is
+still starting up never blocks a publish for its healthy peers.
 
 If your readiness probe uses `Ready()`, a freshly-deployed pod stays
 `NotReady` until a round completes, and a cold cluster (Soloist restarted,
