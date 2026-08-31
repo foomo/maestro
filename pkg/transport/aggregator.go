@@ -103,6 +103,34 @@ func (a *Aggregator[T]) Wait(ctx context.Context) (map[string]T, error) {
 	}
 }
 
+// WaitPartial blocks until all expected messages have arrived or ctx is
+// cancelled, and returns whatever was received either way. complete reports
+// whether every expected key arrived.
+//
+// Unlike Wait, a deadline is not an error: the caller decides whether a
+// partial result is usable. This exists for fan-outs where the participants
+// are interchangeable replicas and one unresponsive member must not veto
+// progress for the rest — see soloist Options.PartialFleet.
+//
+// Like Wait, it cancels the underlying subscription before returning and
+// must not be called twice.
+func (a *Aggregator[T]) WaitPartial(ctx context.Context) (map[string]T, bool) {
+	defer a.cancel()
+
+	select {
+	case <-a.done:
+	case <-ctx.Done():
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	out := make(map[string]T, len(a.received))
+	maps.Copy(out, a.received)
+
+	return out, len(a.received) == len(a.expected)
+}
+
 // Per-message-type convenience constructors.
 
 func NewVoteAggregator(ctx context.Context, sub goflux.BoundSubscriber[Vote], expected []string, keyOf func(Vote) string) (*Aggregator[Vote], error) {
