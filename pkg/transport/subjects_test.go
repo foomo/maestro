@@ -143,13 +143,13 @@ func TestRIDFromSubject_Prefixed(t *testing.T) {
 		// The regression this whole change exists to prevent: parsing
 		// with a hardcoded "round." prefix would return "" here and the
 		// player would vote against round "", silently timing out every
-		// round on a fleet that looks healthy.
+		// round on a deployment that looks healthy.
 		"round.abc.can_commit": "",
 
-		// A message from a different maestro fleet sharing the bus must
+		// A message from a different maestro deployment sharing the bus must
 		// not be adopted.
-		"other.fleet.round.abc.can_commit": "",
-		"":                                 "",
+		"other.deploy.round.abc.can_commit": "",
+		"":                                  "",
 	}
 
 	for in, want := range cases {
@@ -181,23 +181,23 @@ func TestRIDFromSubject_RoundTrips(t *testing.T) {
 	}
 }
 
-// Two fleets on one bus must not see each other's rounds: neither the
+// Two deployments on one bus must not see each other's rounds: neither the
 // per-phase wildcards nor the parser may match across prefixes.
-func TestSubjects_FleetsAreIsolated(t *testing.T) {
-	a := transport.MustSubjects("fleet.a")
-	b := transport.MustSubjects("fleet.b")
+func TestSubjects_DeploymentsAreIsolated(t *testing.T) {
+	a := transport.MustSubjects("deploy.a")
+	b := transport.MustSubjects("deploy.b")
 
 	if got := b.RIDFromSubject(a.RoundCanCommit("r1")); got != "" {
-		t.Errorf("fleet b parsed fleet a's subject as %q", got)
+		t.Errorf("deployment b parsed deployment a's subject as %q", got)
 	}
 
 	if a.PlayerHeartbeat() == b.PlayerHeartbeat() {
-		t.Error("heartbeat subjects must differ between fleets")
+		t.Error("heartbeat subjects must differ between deployments")
 	}
 
 	// The wildcard is what a player actually subscribes with, so verify
 	// the literal scope rather than trusting the builder.
-	if !strings.HasPrefix(a.RoundCanCommitWildcard(), "fleet.a.") {
-		t.Errorf("wildcard %q is not scoped to fleet.a", a.RoundCanCommitWildcard())
+	if !strings.HasPrefix(a.RoundCanCommitWildcard(), "deploy.a.") {
+		t.Errorf("wildcard %q is not scoped to deploy.a", a.RoundCanCommitWildcard())
 	}
 }

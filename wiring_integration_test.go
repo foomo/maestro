@@ -17,7 +17,7 @@ import (
 
 // These tests cover the availability failure found while scaling the catalogue
 // testbed: a player that was in the roster but could not answer a round made
-// every Publish fail for the whole fleet.
+// every Publish fail for every other player.
 //
 // The fix is roster accuracy rather than relaxed commit semantics. A player
 // advertises transport.Heartbeat.NotWired until the broker has acknowledged all
@@ -69,7 +69,7 @@ func TestWiring_StartingPlayerDoesNotBlockPublish(t *testing.T) {
 // deliberate limit of this approach. A player that claims to be wired and then
 // does not answer is a genuine protocol failure: the soloist cannot tell it
 // apart from one that is about to answer, so the round must abort rather than
-// commit a version only part of the fleet has.
+// commit a version only some of the players have.
 func TestWiring_WiredButSilentPlayerStillAborts(t *testing.T) {
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
@@ -155,9 +155,9 @@ func TestWiring_StartingPlayerResyncsAfterwards(t *testing.T) {
 	}
 }
 
-// TestWiring_FullFleetStillConverges guards the happy path: the wiredness gate
+// TestWiring_AllPlayersStillConverge guards the happy path: the wiredness gate
 // must not change behaviour when every player is healthy.
-func TestWiring_FullFleetStillConverges(t *testing.T) {
+func TestWiring_AllPlayersStillConverge(t *testing.T) {
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
 

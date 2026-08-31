@@ -104,8 +104,8 @@ func settleHeartbeats(t *testing.T) {
 // prefix. This is the test that would have caught RIDFromSubject's
 // hardcoded "round." prefix: with it, players receive CanCommit but
 // reply on round "", the soloist's aggregators never match, and the
-// round times out despite a perfectly healthy fleet.
-func TestPrefixedFleetCompletesRound(t *testing.T) {
+// round times out despite perfectly healthy players.
+func TestPrefixedDeploymentCompletesRound(t *testing.T) {
 	const prefix = "catalogue.maestro"
 
 	url := testutil.StartNATS(t)
@@ -142,51 +142,51 @@ func TestPrefixedFleetCompletesRound(t *testing.T) {
 	}
 }
 
-// Two fleets sharing one NATS cluster must not observe each other. This
+// Two deployments sharing one NATS cluster must not observe each other. This
 // is the property that makes a shared bus safe: without prefixing, both
 // soloists would enrol all four players into their rosters and each
 // publish would be gated on players that never staged its blobs.
-func TestTwoPrefixedFleetsAreIsolated(t *testing.T) {
+func TestTwoPrefixedDeploymentsAreIsolated(t *testing.T) {
 	url := testutil.StartNATS(t)
 
 	bsA, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
 	bsB, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
 
-	solA := startPrefixedSoloist(t, url, "fleet.a", bsA, "soloist-a")
-	_ = startPrefixedSoloist(t, url, "fleet.b", bsB, "soloist-b")
+	solA := startPrefixedSoloist(t, url, "deploy.a", bsA, "soloist-a")
+	_ = startPrefixedSoloist(t, url, "deploy.b", bsB, "soloist-b")
 
 	hA := newCapturingHandler()
 	hB := newCapturingHandler()
-	pA := startPrefixedPlayer(t, url, "fleet.a", "player-a", bsA, hA)
-	pB := startPrefixedPlayer(t, url, "fleet.b", "player-b", bsB, hB)
+	pA := startPrefixedPlayer(t, url, "deploy.a", "player-a", bsA, hA)
+	pB := startPrefixedPlayer(t, url, "deploy.b", "player-b", bsB, hB)
 
 	settleHeartbeats(t)
 
 	// Strict mode is the assertion here. If prefixes leaked, each
-	// soloist would have enrolled both players, and fleet A's round
-	// would be gated on fleet B's player — which cannot stage a blob it
+	// soloist would have enrolled both players, and deployment A's round
+	// would be gated on deployment B's player — which cannot stage a blob it
 	// has no store for. A clean Publish means the rosters stayed
 	// disjoint.
 	vA, err := solA.Publish(t.Context(), []soloist.File{
 		{Name: "payload.txt", Reader: strings.NewReader("body-a")},
 	})
 	if err != nil {
-		t.Fatalf("fleet A Publish: %v", err)
+		t.Fatalf("deployment A Publish: %v", err)
 	}
 
 	testingx.WaitFor(t, 5*time.Second, func() bool { return pA.CurrentVersion() == vA })
 
 	if got := hA.Current()["payload.txt"]; got != "body-a" {
-		t.Errorf("fleet A player body = %q, want body-a", got)
+		t.Errorf("deployment A player body = %q, want body-a", got)
 	}
 
-	// Fleet B's player must be entirely untouched by fleet A's round.
+	// Deployment B's player must be entirely untouched by deployment A's round.
 	if v := pB.CurrentVersion(); v != "" {
-		t.Errorf("fleet B player adopted version %q from fleet A's round", v)
+		t.Errorf("deployment B player adopted version %q from deployment A's round", v)
 	}
 
 	if got := hB.Current(); got != nil {
-		t.Errorf("fleet B player staged %v from fleet A's round", got)
+		t.Errorf("deployment B player staged %v from deployment A's round", got)
 	}
 }
 

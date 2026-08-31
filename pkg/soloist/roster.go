@@ -123,7 +123,7 @@ func (r *Roster) Snapshot() map[string]RosterEntry {
 //
 // A player that is alive but not wired is deliberately excluded rather than
 // tolerated as a non-responder: it is starting up and provably cannot vote, so
-// counting it would abort every round for the whole fleet until it finishes.
+// counting it would abort every round for every other player until it finishes.
 // It stays in the roster and [Roster.StaleAgainst] still reports it, so the
 // monitor resyncs it to whatever it missed once it is ready.
 func (r *Roster) Participants() map[string]RosterEntry {

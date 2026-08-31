@@ -9,7 +9,7 @@
 //	tr := transport.NewTransport(nc)
 //	sol, _ := soloist.New(soloist.Options{Transport: tr, ...})
 //
-// On a NATS cluster shared with other services, scope the fleet's
+// On a NATS cluster shared with other services, scope the deployment's
 // subjects with a prefix. Soloist and Player both take their subject
 // layout from the Transport, so this is the only place it is set:
 //

@@ -129,7 +129,7 @@ do, it sets `Heartbeat.NotWired` and the Soloist keeps it out of the
 
 Without that gate, every replica rolling out is briefly a single point of
 failure for publishing: it is in the roster, it cannot vote, and strict
-unanimity turns its silence into an aborted round for the whole fleet.
+unanimity turns its silence into an aborted round for every other player.
 Excluding it costs nothing — it has no data to lose — and [resync](#resync)
 brings it to the current version as soon as it is wired.
 

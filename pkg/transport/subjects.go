@@ -23,9 +23,9 @@ const (
 // sharing a NATS cluster with unrelated services. Maestro's subjects are
 // single-token-rooted ("round", "player") and its wildcard subscriptions
 // are broad, so on a shared bus they both risk colliding with another
-// service's namespace and, worse, allow two maestro fleets on the same
-// cluster to enrol each other's players into their rosters. A prefix
-// scopes a fleet so neither can happen.
+// service's namespace and, worse, allow two maestro deployments on the
+// same cluster to enrol each other's players into their rosters. A prefix
+// scopes a deployment so neither can happen.
 type Subjects struct {
 	// prefix is stored already dot-terminated (or empty) so every
 	// builder is a plain concatenation and no builder has to re-derive
@@ -39,7 +39,7 @@ type Subjects struct {
 // prefix may contain multiple dot-separated tokens ("catalogue.maestro").
 // It is validated because an invalid prefix does not fail loudly at
 // publish time — NATS would simply route nothing, which presents as a
-// fleet where every round times out despite every player being healthy.
+// deployment where every round times out despite every player being healthy.
 func NewSubjects(prefix string) (Subjects, error) {
 	if prefix == "" {
 		return Subjects{}, nil
@@ -121,7 +121,7 @@ func (s Subjects) RoundAbort(rid string) string     { return s.round(rid, "abort
 // RIDFromSubject extracts the round id from a subject this Subjects
 // would have produced. Returns "" when subject does not belong to this
 // prefix, which is also how a message that leaked in from another
-// maestro fleet on a shared bus is rejected.
+// maestro deployment on a shared bus is rejected.
 func (s Subjects) RIDFromSubject(subject string) string {
 	want := s.prefix + segmentRound + "."
 	if !strings.HasPrefix(subject, want) {

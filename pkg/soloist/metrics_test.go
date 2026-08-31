@@ -189,8 +189,8 @@ func TestMetrics_RecordsRoster(t *testing.T) {
 	}
 }
 
-// The classifiers are the whole point of the outcome breakdown: a fleet
-// that rejects a payload and a fleet that has stopped answering call for
+// The classifiers are the whole point of the outcome breakdown: players
+// that reject a payload and players that have stopped answering call for
 // opposite responses, and both otherwise look like "publish failed".
 func TestOutcomeClassifiers(t *testing.T) {
 	cases := []struct {

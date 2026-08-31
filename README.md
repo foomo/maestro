@@ -9,13 +9,15 @@
 
 # maestro
 
-> Atomic in-memory state replication for Go, over NATS.
+> One soloist writes the score. Every player turns the page together.
+>
+> Atomic in-memory state replication for Go, from one writer to every replica.
 
-Replicate a single in-memory state from one writer to many readers, atomically, over NATS. The state is whatever Go
+Replicate a single in-memory state from one writer to many readers, atomically. The state is whatever Go
 value your service holds in memory — a catalog, a routing table, a feature flag set. Maestro coordinates a three-phase
 commit so every reader either flips to the new version together or keeps the old one; partial updates are not
 observable. Bytes flow through a pluggable
-`BlobStore` (HTTP, S3, …); only control plane traffic touches NATS.
+`BlobStore` (HTTP, S3, …); only control plane traffic touches the message bus (NATS today).
 
 ## Architecture
 
@@ -100,49 +102,49 @@ promotes it; `Abort` discards it.
 
 ```go
 type myHandler struct {
-cur     atomic.Pointer[Catalog]
-pending map[maestro.Version]*Catalog
-mu      sync.Mutex
+	cur     atomic.Pointer[Catalog]
+	pending map[maestro.Version]*Catalog
+	mu      sync.Mutex
 }
 
 func (h *myHandler) Stage(ctx context.Context, v maestro.Version, m maestro.Manifest, src player.FileSource) error {
-r, err := src.Open("catalog.json") // hash-verified by the framework
-if err != nil {
-return err
-}
-defer r.Close()
+	r, err := src.Open("catalog.json") // hash-verified by the framework
+	if err != nil {
+		return err
+	}
+	defer r.Close()
 
-var c Catalog
-if err := json.NewDecoder(r).Decode(&c); err != nil {
-return err
-}
+	var c Catalog
+	if err := json.NewDecoder(r).Decode(&c); err != nil {
+		return err
+	}
 
-h.mu.Lock()
-h.pending[v] = &c
-h.mu.Unlock()
+	h.mu.Lock()
+	h.pending[v] = &c
+	h.mu.Unlock()
 
-return nil
+	return nil
 }
 
 func (h *myHandler) Activate(ctx context.Context, v maestro.Version) error {
-h.mu.Lock()
-defer h.mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-p, ok := h.pending[v]
-delete(h.pending, v)
-if !ok {
-return fmt.Errorf("no pending for %q", v)
-}
+	p, ok := h.pending[v]
+	delete(h.pending, v)
+	if !ok {
+		return fmt.Errorf("no pending for %q", v)
+	}
 
-h.cur.Store(p)
-return nil
+	h.cur.Store(p)
+	return nil
 }
 
 func (h *myHandler) Abort(_ context.Context, v maestro.Version) error {
-h.mu.Lock()
-delete(h.pending, v)
-h.mu.Unlock()
-return nil
+	h.mu.Lock()
+	delete(h.pending, v)
+	h.mu.Unlock()
+	return nil
 }
 
 func (h *myHandler) Current() *Catalog { return h.cur.Load() }
@@ -158,8 +160,8 @@ Notes:
 
 ```go
 svr := keel.NewServer(
-keel.WithHTTPHealthzService(true),
-keel.WithHTTPPrometheusService(true),
+	keel.WithHTTPHealthzService(true),
+	keel.WithHTTPPrometheusService(true),
 )
 l := svr.Logger()
 
@@ -169,33 +171,33 @@ log.Must(l, err)
 h := &myHandler{pending: make(map[maestro.Version]*Catalog)}
 
 pl, err := player.New(player.Options{
-Logger:       l,
-Transport:    transport.NewTransport(nc),
-BlobReader:   localfs.NewClient(soloistHTTPBase),
-InstanceID:   instanceID,
-StageHandler: h,
+	Logger:       l,
+	Transport:    transport.NewTransport(nc),
+	BlobReader:   localfs.NewClient(soloistHTTPBase),
+	InstanceID:   instanceID,
+	StageHandler: h,
 })
 log.Must(l, err)
 
 svr.AddService(pl) // Start blocks for service lifetime
-svr.AddCloser(pl) // Close on SIGTERM
+svr.AddCloser(pl)  // Close on SIGTERM
 
-wired := healthz.NewHealthzerFn(func (_ context.Context) error {
-if !pl.Wired() {
-return errors.New("player not wired")
-}
-return nil
+wired := healthz.NewHealthzerFn(func(_ context.Context) error {
+	if !pl.Wired() {
+		return errors.New("player not wired")
+	}
+	return nil
 })
 svr.AddReadinessHealthzers(wired)
 svr.AddLivenessHealthzers(wired)
 
-svr.AddPublicHTTPService(http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
-c := h.Current()
-if c == nil {
-http.Error(w, "no state", http.StatusServiceUnavailable)
-return
-}
-_ = json.NewEncoder(w).Encode(c)
+svr.AddPublicHTTPService(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := h.Current()
+	if c == nil {
+		http.Error(w, "no state", http.StatusServiceUnavailable)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(c)
 }))
 
 svr.Run()
@@ -210,8 +212,8 @@ HTTP handler instead.
 
 ```go
 svr := keel.NewServer(
-keel.WithInitService(keelnatsservice.MustNewEmbeddedServer()),
-keel.WithHTTPHealthzService(true),
+	keel.WithInitService(keelnatsservice.MustNewEmbeddedServer()),
+	keel.WithHTTPHealthzService(true),
 )
 l := svr.Logger()
 
@@ -224,21 +226,21 @@ log.Must(l, err)
 svr.AddInternalHTTPService(bs.Handler()) // players GET blobs here
 
 sol, err := soloist.New(soloist.Options{
-Logger:     l,
-BlobStore:  bs,
-Transport:  transport.NewTransport(nc),
-InstanceID: instanceID,
+	Logger:     l,
+	BlobStore:  bs,
+	Transport:  transport.NewTransport(nc),
+	InstanceID: instanceID,
 })
 log.Must(l, err)
 
 svr.AddService(sol)
 svr.AddCloser(sol)
 
-ready := healthz.NewHealthzerFn(func (_ context.Context) error {
-if !sol.Ready() {
-return errors.New("soloist not ready")
-}
-return nil
+ready := healthz.NewHealthzerFn(func(_ context.Context) error {
+	if !sol.Ready() {
+		return errors.New("soloist not ready")
+	}
+	return nil
 })
 svr.AddReadinessHealthzers(ready)
 svr.AddLivenessHealthzers(ready)
@@ -281,7 +283,7 @@ All three of Player, Soloist, and Transport accept a `*zap.Logger`, OTel
 - **Heartbeat-before-subscribe.** A fresh player publishes its first heartbeat before its subscribers finish wiring, so
   for a moment it is in the roster but cannot answer a round. It advertises this (`Heartbeat.NotWired`) and the soloist
   leaves it out of the `expected` set until its subscriptions are live, then resyncs it. Without that gate every
-  rolling replica would abort publishes fleet-wide while it started. Nothing to do.
+  rolling replica would abort publishes for every other player while it started. Nothing to do.
 - **Soloist restart loses `currentVersion`.** New players become `Wired()`
   but never `Ready()` until the next `Publish`. If cold-start data is required, have your soloist `Publish` on boot from
   a persistent source.
