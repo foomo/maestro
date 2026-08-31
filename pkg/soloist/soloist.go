@@ -249,7 +249,7 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 	roundStart := time.Now()
 
 	// participants narrows as phases drop players. In strict mode it stays
-	// equal to expected (any drop is an abort); with PartialFleet it shrinks
+	// equal to expected (any drop is an abort); with AllowPartialCommit it shrinks
 	// to those still following the round.
 	participants := expected
 
@@ -314,7 +314,7 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 
 // runPhase1 drives CanCommit and returns the players still following the
 // round. In strict mode that is always the full expected set (anything less
-// is an error). With PartialFleet it is the subset that voted OK.
+// is an error). With AllowPartialCommit it is the subset that voted OK.
 func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) ([]string, error) {
 	voteSub := goflux.BindSubscriber(s.tr.Vote.Subscriber, s.tr.Subjects.RoundVote(rid))
 
@@ -336,7 +336,7 @@ func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestr
 		return nil, fmt.Errorf("can_commit publish: %w", err)
 	}
 
-	if s.opts.PartialFleet {
+	if s.opts.AllowPartialCommit {
 		res, complete := agg.WaitPartial(cctx)
 		s.logVoteRejections(rid, "can_commit", res)
 
@@ -402,7 +402,7 @@ func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestr
 		return nil, fmt.Errorf("pre_commit publish: %w", err)
 	}
 
-	if s.opts.PartialFleet {
+	if s.opts.AllowPartialCommit {
 		res, complete := agg.WaitPartial(cctx)
 		s.logStagedRejections(rid, "pre_commit", res)
 
@@ -617,6 +617,11 @@ func (s *Soloist) tryResync(ctx context.Context) {
 func (s *Soloist) subscribeHeartbeats(ctx context.Context) error {
 	return s.tr.Heartbeat.Subscribe(ctx, s.tr.Subjects.PlayerHeartbeat(),
 		func(_ context.Context, msg goflux.Message[transport.Heartbeat]) error {
+			if msg.Payload.Leaving {
+				s.roster.Remove(msg.Payload.InstanceID)
+				return nil
+			}
+
 			s.roster.Observe(msg.Payload)
 			return nil
 		})

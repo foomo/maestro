@@ -110,7 +110,7 @@ func (a *Aggregator[T]) Wait(ctx context.Context) (map[string]T, error) {
 // Unlike Wait, a deadline is not an error: the caller decides whether a
 // partial result is usable. This exists for fan-outs where the participants
 // are interchangeable replicas and one unresponsive member must not veto
-// progress for the rest — see soloist Options.PartialFleet.
+// progress for the rest — see soloist Options.AllowPartialCommit.
 //
 // Like Wait, it cancels the underlying subscription before returning and
 // must not be called twice.

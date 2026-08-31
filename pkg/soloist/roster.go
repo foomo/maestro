@@ -76,6 +76,22 @@ func (r *Roster) Observe(hb transport.Heartbeat) {
 	}
 }
 
+// Remove drops id from the roster immediately, without waiting for its
+// heartbeat to age out of the window. Used for graceful player departure: a
+// player that announces it is leaving should not be counted in the next
+// round's expected set.
+func (r *Roster) Remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, existed := r.entries[id]; existed {
+		r.l.Info("player left", zap.String("iid", id))
+		delete(r.entries, id)
+	}
+
+	delete(r.dirty, id)
+}
+
 // Snapshot returns the currently-alive players (heartbeat within window).
 func (r *Roster) Snapshot() map[string]RosterEntry {
 	r.mu.RLock()

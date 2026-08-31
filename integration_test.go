@@ -271,6 +271,63 @@ func TestStageErrorAbortsRoundLeavesPriorVersion(t *testing.T) {
 	}
 }
 
+// TestPlayerGracefulCloseExcludesFromNextRound verifies that a player which
+// departs via Close (not a crash) is dropped from the soloist's roster
+// immediately, so the next Publish does not wait out CanCommitTimeout for it
+// and does not require soloist.Options.AllowPartialCommit to succeed.
+func TestPlayerGracefulCloseExcludesFromNextRound(t *testing.T) {
+	url := testutil.StartNATS(t)
+	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
+
+	s := startSoloist(t, url, bs)
+	h1, h2 := newCapturingHandler(), newCapturingHandler()
+
+	nc1 := dialNATS(t, url)
+	pl1 := newPlayer(t, nc1, "p1", bs, h1)
+	ctx1, cancel1 := context.WithCancel(t.Context())
+	go pl1.Start(ctx1) //nolint:errcheck
+	testingx.WaitFor(t, 2*time.Second, func() bool { return pl1.Wired() })
+
+	p2 := startPlayer(t, url, "p2", bs, h2)
+
+	time.Sleep(200 * time.Millisecond) // let both heartbeats land in roster
+
+	if err := pl1.Close(t.Context()); err != nil {
+		t.Fatalf("pl1.Close: %v", err)
+	}
+
+	cancel1()
+
+	// Close's Leaving heartbeat is a fire-and-forget NATS publish: Close
+	// returns once the local client accepts it, not once the soloist's
+	// subscriber has processed it. Retry Publish until that lands in the
+	// roster instead of asserting on a fixed sleep — a round that still
+	// includes p1 costs a full CanCommitTimeout (strict Wait requires every
+	// expected voter, so p2 answering immediately does not shortcut it), but
+	// the Leaving heartbeat normally lands well within that, so this
+	// converges in one or two attempts rather than actually exhausting the
+	// WaitFor budget.
+	var (
+		v   maestro.Version
+		err error
+	)
+
+	testingx.WaitFor(t, 5*time.Second, func() bool {
+		v, err = s.Publish(t.Context(), []soloist.File{{Name: "doc.bin", Reader: strings.NewReader("after-leave")}})
+		return err == nil
+	})
+
+	if err != nil {
+		t.Fatalf("Publish after graceful departure never succeeded: %v", err)
+	}
+
+	testingx.WaitFor(t, 3*time.Second, func() bool { return p2.CurrentVersion() == v })
+
+	if !p2.Ready() {
+		t.Error("p2 not Ready after publish")
+	}
+}
+
 // TestPlayerRestartResyncsToCurrent verifies that a fresh player instance
 // resyncs to the soloist's current version without carrying over in-memory
 // state from a prior session.

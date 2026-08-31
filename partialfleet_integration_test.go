@@ -15,21 +15,21 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-// startPartialFleetSoloist mirrors startSoloist but enables PartialFleet.
+// startPartialFleetSoloist mirrors startSoloist but enables AllowPartialCommit.
 func startPartialFleetSoloist(t *testing.T, url string, bs *localfs.Store) *soloist.Soloist {
 	t.Helper()
 
 	s, err := soloist.New(soloist.Options{
-		Transport:        transport.NewTransport(dialNATS(t, url)),
-		BlobStore:        bs,
-		InstanceID:       "soloist-1",
-		HeartbeatWindow:  5 * time.Second,
-		RosterScanTick:   100 * time.Millisecond,
-		ResyncDebounce:   50 * time.Millisecond,
-		CanCommitTimeout: 500 * time.Millisecond,
-		DoCommitTimeout:  500 * time.Millisecond,
-		PartialFleet:     true,
-		Logger:           zaptest.NewLogger(t),
+		Transport:          transport.NewTransport(dialNATS(t, url)),
+		BlobStore:          bs,
+		InstanceID:         "soloist-1",
+		HeartbeatWindow:    5 * time.Second,
+		RosterScanTick:     100 * time.Millisecond,
+		ResyncDebounce:     50 * time.Millisecond,
+		CanCommitTimeout:   500 * time.Millisecond,
+		DoCommitTimeout:    500 * time.Millisecond,
+		AllowPartialCommit: true,
+		Logger:             zaptest.NewLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,14 +98,14 @@ func TestPartialFleet_SilentPlayerDoesNotBlockPublish(t *testing.T) {
 	}
 }
 
-// TestPartialFleet_StrictModeStillFails is the control: with PartialFleet off
+// TestPartialFleet_StrictModeStillFails is the control: with AllowPartialCommit off
 // the same scenario must abort the publish, preserving the lockstep guarantee
 // other maestro consumers rely on.
 func TestPartialFleet_StrictModeStillFails(t *testing.T) {
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
 
-	s := startSoloist(t, url, bs) // strict: PartialFleet defaults to false
+	s := startSoloist(t, url, bs) // strict: AllowPartialCommit defaults to false
 
 	hOK := newCapturingHandler()
 	_ = startPlayer(t, url, "p-healthy", bs, hOK)
@@ -127,7 +127,7 @@ func TestPartialFleet_StrictModeStillFails(t *testing.T) {
 	}
 }
 
-// TestPartialFleet_NoPlayersAtAllStillFails asserts PartialFleet does not
+// TestPartialFleet_NoPlayersAtAllStillFails asserts AllowPartialCommit does not
 // degrade into "publish always succeeds": if the roster is non-empty but not a
 // single member follows the round, that is still a failure the producer must
 // hear about.
@@ -232,7 +232,7 @@ func TestPartialFleet_RejectingPlayerDoesNotBlockOthers(t *testing.T) {
 }
 
 // TestPartialFleet_FullFleetStillConverges guards the happy path: enabling
-// PartialFleet must not change behaviour when every player is healthy.
+// AllowPartialCommit must not change behaviour when every player is healthy.
 func TestPartialFleet_FullFleetStillConverges(t *testing.T) {
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})

@@ -39,6 +39,22 @@ func TestRosterDuplicateConflict(t *testing.T) {
 	}
 }
 
+func TestRosterRemove(t *testing.T) {
+	r := soloist.NewRoster(15*time.Second, nil)
+	r.Observe(transport.Heartbeat{InstanceID: "p1", CurrentVersion: "v1"})
+	r.MarkDirty("p1")
+
+	r.Remove("p1")
+
+	if len(r.Snapshot()) != 0 {
+		t.Error("expected p1 removed from roster")
+	}
+
+	if r.DirtyCount() != 0 {
+		t.Error("expected p1 cleared from dirty set")
+	}
+}
+
 func TestRosterStaleAgainst(t *testing.T) {
 	r := soloist.NewRoster(15*time.Second, nil)
 	r.Observe(transport.Heartbeat{InstanceID: "p1", CurrentVersion: "v1"})

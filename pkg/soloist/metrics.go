@@ -99,7 +99,7 @@ func (m *metrics) recordPhase(ctx context.Context, phase string, d time.Duration
 
 // recordRoster records how many players a round started with.
 //
-// Worth watching alongside publish outcomes because with PartialFleet a
+// Worth watching alongside publish outcomes because with AllowPartialCommit a
 // round succeeds regardless of how many players followed it — a roster
 // quietly shrinking to one is invisible in the outcome counter alone.
 func (m *metrics) recordRoster(ctx context.Context, players int) {

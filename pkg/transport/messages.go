@@ -66,6 +66,11 @@ type Heartbeat struct {
 	InstanceID     string          `msgpack:"iid"`
 	GenAcked       int64           `msgpack:"gen_acked"`
 	CurrentVersion maestro.Version `msgpack:"current_version"`
+	// Leaving marks a player's final heartbeat before a graceful shutdown.
+	// The soloist removes it from the roster immediately instead of waiting
+	// out HeartbeatWindow, so it is excluded from the next round's expected
+	// set rather than needing to be tolerated as a non-responder in one.
+	Leaving bool `msgpack:"leaving,omitempty"`
 }
 
 // Per-type codec singletons. Backed by vmihailenco/msgpack/v5 via foomo/goencode.

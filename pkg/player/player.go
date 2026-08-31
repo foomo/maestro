@@ -30,10 +30,12 @@ type Player struct {
 	ready   atomic.Bool
 	wired   atomic.Bool
 
-	cancel    context.CancelFunc
-	done      chan struct{}
-	started   atomic.Bool
-	closeOnce sync.Once
+	cancel        context.CancelFunc
+	done          chan struct{}
+	leaving       chan struct{}
+	heartbeatDone chan struct{}
+	started       atomic.Bool
+	closeOnce     sync.Once
 }
 
 // ErrAlreadyStarted is returned when Start is called more than once.
@@ -89,6 +91,8 @@ func (p *Player) Start(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
 	p.done = make(chan struct{})
+	p.leaving = make(chan struct{})
+	p.heartbeatDone = make(chan struct{})
 
 	defer close(p.done)
 
@@ -119,8 +123,24 @@ func (p *Player) Start(ctx context.Context) error {
 // Close signals shutdown and blocks until every goroutine spawned by Start
 // has exited or ctx expires. Safe to call before Start (no-op) and safe to
 // call multiple times.
+//
+// Before tearing down, it stops the periodic heartbeat and best-effort
+// publishes one final heartbeat marked Leaving, so the soloist drops this
+// player from its roster immediately instead of waiting out HeartbeatWindow
+// — a graceful shutdown then excludes it from the next round's expected set
+// rather than needing to be tolerated as a non-responder in one. The
+// periodic heartbeat is fully stopped first so it cannot race a scheduled
+// tick and re-add the player to the roster right after Leaving lands. A
+// crash cannot send this; that residual case is still covered by heartbeat
+// expiry.
 func (p *Player) Close(ctx context.Context) error {
 	p.closeOnce.Do(func() {
+		if p.wired.Load() {
+			close(p.leaving)
+			<-p.heartbeatDone
+			p.emitLeaving(ctx)
+		}
+
 		if p.cancel != nil {
 			p.cancel()
 		}
@@ -341,9 +361,18 @@ func (p *Player) handleAbort(ctx context.Context, ab transport.Abort, rid string
 }
 
 // runHeartbeat publishes a Heartbeat every HeartbeatPeriod with the player's
-// current state. Returns nil when ctx cancels. Per-publish errors are logged
-// inside emitHeartbeat — a single missed publish is not player-fatal.
+// current state. Returns nil when ctx cancels or Close signals leaving.
+// Per-publish errors are logged inside emitHeartbeat — a single missed
+// publish is not player-fatal.
+//
+// Checked ahead of ctx.Done() and t.C: Close closes p.leaving and waits for
+// heartbeatDone before publishing its own final Leaving heartbeat, so this
+// loop must stop (and be observed as stopped) before that publish — otherwise
+// an already-scheduled regular heartbeat could land right after Leaving and
+// re-add the player to the roster.
 func (p *Player) runHeartbeat(ctx context.Context) error {
+	defer close(p.heartbeatDone)
+
 	t := time.NewTicker(p.opts.HeartbeatPeriod)
 	defer t.Stop()
 	// Send one immediately so soloist roster picks us up quickly in tests.
@@ -351,9 +380,17 @@ func (p *Player) runHeartbeat(ctx context.Context) error {
 
 	for {
 		select {
+		case <-p.leaving:
+			return nil
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+			select {
+			case <-p.leaving:
+				return nil
+			default:
+			}
+
 			p.emitHeartbeat(ctx)
 		}
 	}
@@ -369,6 +406,18 @@ func (p *Player) emitHeartbeat(ctx context.Context) {
 	}); err != nil {
 		p.l.Warn("heartbeat publish failed", zap.Error(err))
 		return
+	}
+}
+
+// emitLeaving publishes a final Heartbeat{Leaving: true}. Best-effort: a
+// failed publish just leaves the soloist to expire this player normally.
+func (p *Player) emitLeaving(ctx context.Context) {
+	if err := p.tr.Heartbeat.Publish(ctx, p.tr.Subjects.PlayerHeartbeat(), transport.Heartbeat{
+		InstanceID:     p.opts.InstanceID,
+		CurrentVersion: p.CurrentVersion(),
+		Leaving:        true,
+	}); err != nil {
+		p.l.Warn("leaving heartbeat publish failed", zap.Error(err))
 	}
 }
 
