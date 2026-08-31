@@ -30,6 +30,11 @@ type Player struct {
 	ready   atomic.Bool
 	wired   atomic.Bool
 
+	// subsLive counts the round subscriptions the broker has acknowledged.
+	// Wired only reports true once all of roundSubscriptions are live, which
+	// is what the heartbeat advertises to the soloist's roster.
+	subsLive atomic.Int32
+
 	cancel        context.CancelFunc
 	done          chan struct{}
 	leaving       chan struct{}
@@ -110,8 +115,6 @@ func (p *Player) Start(ctx context.Context) error {
 	g.Add(p.subscribeDoCommit)
 	g.Add(p.subscribeAbort)
 
-	p.wired.Store(true)
-
 	err := g.Wait()
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil
@@ -135,7 +138,10 @@ func (p *Player) Start(ctx context.Context) error {
 // expiry.
 func (p *Player) Close(ctx context.Context) error {
 	p.closeOnce.Do(func() {
-		if p.wired.Load() {
+		// Gated on started, not on Wired: a player still establishing its
+		// round subscriptions has already been heartbeating, so it is in the
+		// roster and still needs to announce its departure.
+		if p.started.Load() {
 			close(p.leaving)
 			<-p.heartbeatDone
 			p.emitLeaving(ctx)
@@ -170,7 +176,10 @@ func (p *Player) CurrentVersion() maestro.Version {
 // Ready reports whether at least one DoCommit has succeeded.
 func (p *Player) Ready() bool { return p.ready.Load() }
 
-// Wired reports whether Start has wired heartbeat + subscribers.
+// Wired reports whether every round subscription is established and certain
+// to receive broadcasts, i.e. whether this player can actually answer a round.
+// It is what the heartbeat advertises to the soloist, which excludes un-wired
+// players from a round's expected set instead of aborting on their silence.
 func (p *Player) Wired() bool { return p.wired.Load() }
 
 // ------------------------------------------------------------------------------------------------
@@ -403,6 +412,7 @@ func (p *Player) emitHeartbeat(ctx context.Context) {
 		InstanceID:     p.opts.InstanceID,
 		GenAcked:       0,
 		CurrentVersion: cur,
+		NotWired:       !p.wired.Load(),
 	}); err != nil {
 		p.l.Warn("heartbeat publish failed", zap.Error(err))
 		return
@@ -421,49 +431,70 @@ func (p *Player) emitLeaving(ctx context.Context) {
 	}
 }
 
+// roundSubscriptions is the number of subscribers that must be established
+// before this player can answer a round. Wired flips once all of them report
+// ready; the heartbeat advertises anything less as NotWired.
+const roundSubscriptions = 4
+
 // subscribeCanCommit, subscribePreCommit, subscribeDoCommit, subscribeAbort
 // each block until ctx cancels or the underlying NATS subscription fails.
 // An errgroup in Start runs all four concurrently so a single subscribe-time
 // failure tears the player down instead of silently going deaf to one phase.
+//
+// Each subscribes via goflux.SubscribeWithReady rather than Subscribe: the
+// broker must acknowledge the subscription before this player claims it can
+// answer a round. Subscribe alone returns no such signal — it blocks for the
+// lifetime of the subscription — so a player that merely called it may still
+// miss a CanCommit that is already in flight.
 
 func (p *Player) subscribeCanCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "can_commit"))
 
-	return p.tr.CanCommit.Subscribe(ctx, p.tr.Subjects.RoundCanCommitWildcard(),
+	return goflux.SubscribeWithReady(ctx, p.tr.CanCommit.Subscriber, p.tr.Subjects.RoundCanCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.CanCommit]) error {
 			p.handleCanCommit(hctx, p.tr.Subjects.RIDFromSubject(m.Subject), m.Payload)
 			return nil
-		})
+		}, p.subscriptionLive)
 }
 
 func (p *Player) subscribePreCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "pre_commit"))
 
-	return p.tr.PreCommit.Subscribe(ctx, p.tr.Subjects.RoundPreCommitWildcard(),
+	return goflux.SubscribeWithReady(ctx, p.tr.PreCommit.Subscriber, p.tr.Subjects.RoundPreCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.PreCommit]) error {
 			p.handlePreCommit(hctx, m.Payload)
 			return nil
-		})
+		}, p.subscriptionLive)
 }
 
 func (p *Player) subscribeDoCommit(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "do_commit"))
 
-	return p.tr.DoCommit.Subscribe(ctx, p.tr.Subjects.RoundDoCommitWildcard(),
+	return goflux.SubscribeWithReady(ctx, p.tr.DoCommit.Subscriber, p.tr.Subjects.RoundDoCommitWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.DoCommit]) error {
 			p.handleDoCommit(hctx, m.Payload)
 			return nil
-		})
+		}, p.subscriptionLive)
 }
 
 func (p *Player) subscribeAbort(ctx context.Context) error {
 	p.l.Debug("coordinator subscribing", zap.String("phase", "abort"))
 
-	return p.tr.Abort.Subscribe(ctx, p.tr.Subjects.RoundAbortWildcard(),
+	return goflux.SubscribeWithReady(ctx, p.tr.Abort.Subscriber, p.tr.Subjects.RoundAbortWildcard(),
 		func(hctx context.Context, m goflux.Message[transport.Abort]) error {
 			p.handleAbort(hctx, m.Payload, p.tr.Subjects.RIDFromSubject(m.Subject))
 			return nil
-		})
+		}, p.subscriptionLive)
+}
+
+// subscriptionLive records one established round subscription, flipping Wired
+// once the last of them lands. Passed as the ready callback to each subscriber,
+// so it must not block.
+func (p *Player) subscriptionLive() {
+	if p.subsLive.Add(1) == roundSubscriptions {
+		p.wired.Store(true)
+		p.l.Info("round subscriptions established")
+	}
 }
 
 // setPending stores a manifest keyed by round id (between CanCommit and PreCommit).

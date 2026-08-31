@@ -97,11 +97,13 @@ func (m *metrics) recordPhase(ctx context.Context, phase string, d time.Duration
 		metric.WithAttributes(semconv.AttrPublishPhase.String(phase)))
 }
 
-// recordRoster records how many players a round started with.
+// recordRoster records how many players a round started with, counting only
+// those wired for rounds.
 //
-// Worth watching alongside publish outcomes because with AllowPartialCommit a
-// round succeeds regardless of how many players followed it — a roster
-// quietly shrinking to one is invisible in the outcome counter alone.
+// Worth watching alongside publish outcomes because players that are alive but
+// still starting up are excluded from the expected set: a fleet stuck in a
+// crash-loop can leave this near zero while the outcome counter reports
+// nothing but successes.
 func (m *metrics) recordRoster(ctx context.Context, players int) {
 	if m == nil {
 		return

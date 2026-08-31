@@ -15,6 +15,11 @@ type RosterEntry struct {
 	CurrentVersion maestro.Version
 	GenAcked       int64
 	LastSeen       time.Time
+	// Wired reports whether the player's round subscriptions were established
+	// as of its last heartbeat. A player that is alive but not wired is a real
+	// roster member — tracked, and resynced once it is ready — but it cannot
+	// answer a round, so Snapshot leaves it out of the expected set.
+	Wired bool
 }
 
 // Roster is a thread-safe set of recently-heartbeating players.
@@ -73,6 +78,7 @@ func (r *Roster) Observe(hb transport.Heartbeat) {
 		CurrentVersion: hb.CurrentVersion,
 		GenAcked:       hb.GenAcked,
 		LastSeen:       r.now(),
+		Wired:          !hb.NotWired,
 	}
 }
 
@@ -92,7 +98,9 @@ func (r *Roster) Remove(id string) {
 	delete(r.dirty, id)
 }
 
-// Snapshot returns the currently-alive players (heartbeat within window).
+// Snapshot returns the currently-alive players (heartbeat within window),
+// including any that are not wired yet. Use [Roster.Participants] to build a
+// round's expected set.
 func (r *Roster) Snapshot() map[string]RosterEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -102,6 +110,31 @@ func (r *Roster) Snapshot() map[string]RosterEntry {
 	out := make(map[string]RosterEntry, len(r.entries))
 	for k, v := range r.entries {
 		if v.LastSeen.After(cutoff) {
+			out[k] = v
+		}
+	}
+
+	return out
+}
+
+// Participants returns the alive players that can actually answer a round,
+// i.e. those whose last heartbeat reported their round subscriptions
+// established.
+//
+// A player that is alive but not wired is deliberately excluded rather than
+// tolerated as a non-responder: it is starting up and provably cannot vote, so
+// counting it would abort every round for the whole fleet until it finishes.
+// It stays in the roster and [Roster.StaleAgainst] still reports it, so the
+// monitor resyncs it to whatever it missed once it is ready.
+func (r *Roster) Participants() map[string]RosterEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cutoff := r.now().Add(-r.window)
+
+	out := make(map[string]RosterEntry, len(r.entries))
+	for k, v := range r.entries {
+		if v.LastSeen.After(cutoff) && v.Wired {
 			out[k] = v
 		}
 	}
@@ -141,8 +174,13 @@ func (r *Roster) DuplicateConflicts() int64 {
 	return r.conflicts
 }
 
-// StaleAgainst returns instance IDs that are alive but whose CurrentVersion
-// differs from want.
+// StaleAgainst returns instance IDs that are alive, wired, and whose
+// CurrentVersion differs from want.
+//
+// Un-wired players are skipped for the same reason they are left out of a
+// round's expected set: a resync round is an ordinary round, so targeting a
+// player that cannot vote would just fail. They keep heartbeating as stale, so
+// a later scan picks them up once their subscriptions are established.
 func (r *Roster) StaleAgainst(want maestro.Version) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -152,7 +190,7 @@ func (r *Roster) StaleAgainst(want maestro.Version) []string {
 	var stale []string
 
 	for id, e := range r.entries {
-		if !e.LastSeen.After(cutoff) {
+		if !e.LastSeen.After(cutoff) || !e.Wired {
 			continue
 		}
 

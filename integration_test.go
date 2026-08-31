@@ -274,7 +274,7 @@ func TestStageErrorAbortsRoundLeavesPriorVersion(t *testing.T) {
 // TestPlayerGracefulCloseExcludesFromNextRound verifies that a player which
 // departs via Close (not a crash) is dropped from the soloist's roster
 // immediately, so the next Publish does not wait out CanCommitTimeout for it
-// and does not require soloist.Options.AllowPartialCommit to succeed.
+// and still commits unanimously among the players that remain.
 func TestPlayerGracefulCloseExcludesFromNextRound(t *testing.T) {
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})

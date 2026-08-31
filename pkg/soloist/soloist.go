@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -195,11 +194,29 @@ func (s *Soloist) Publish(ctx context.Context, files []File) (maestro.Version, e
 }
 
 func (s *Soloist) commitManifest(ctx context.Context, m maestro.Manifest) error {
-	rosterSnap := s.roster.Snapshot()
+	// Participants, not Snapshot: players that are alive but still wiring up
+	// their round subscriptions cannot vote, and counting them would abort
+	// this round for everyone. They are resynced by the monitor once ready.
+	rosterSnap := s.roster.Participants()
 
 	s.metrics.recordRoster(ctx, len(rosterSnap))
 
 	if len(rosterSnap) == 0 {
+		// An empty roster and a roster of only starting-up players are not
+		// the same thing. With nobody out there, committing silently is
+		// correct — there is no one to diverge from. With players present but
+		// none able to vote yet, a silent commit would advance the soloist
+		// past a version they never saw and never asked to skip, so this has
+		// to be a failure the producer hears about and retries.
+		if alive := len(s.roster.Snapshot()); alive > 0 {
+			s.metrics.recordOutcome(ctx, semconv.PublishOutcomeAbortVoteTimeout)
+
+			return fmt.Errorf(
+				"can_commit: %d player(s) in the roster, none wired for rounds yet; retry once they finish starting",
+				alive,
+			)
+		}
+
 		s.l.Info("silent commit", zap.String("version", string(m.Version)))
 		s.setCurrent(m)
 		s.metrics.recordOutcome(ctx, semconv.PublishOutcomeNoPlayersSilent)
@@ -248,16 +265,10 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 
 	roundStart := time.Now()
 
-	// participants narrows as phases drop players. In strict mode it stays
-	// equal to expected (any drop is an abort); with AllowPartialCommit it shrinks
-	// to those still following the round.
-	participants := expected
-
 	// Phase 1: CanCommit
 	t1 := time.Now()
 
-	participants, err := s.runPhase1(ctx, rid, gen, m, participants)
-	if err != nil {
+	if err := s.runPhase1(ctx, rid, gen, m, expected); err != nil {
 		rl.Warn("can_commit failed", zap.Error(err))
 		s.publishAbort(ctx, rid, gen, "can_commit failed")
 		s.metrics.recordPhase(ctx, semconv.PublishPhaseCanCommit, time.Since(t1))
@@ -273,8 +284,7 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 	stageTimeout := s.opts.StageTimeout(m.TotalSize)
 	t2 := time.Now()
 
-	participants, err = s.runPhase2(ctx, rid, gen, m, participants, stageTimeout)
-	if err != nil {
+	if err := s.runPhase2(ctx, rid, gen, m, expected, stageTimeout); err != nil {
 		rl.Warn("pre_commit failed", zap.Error(err))
 		s.publishAbort(ctx, rid, gen, "pre_commit failed")
 		s.metrics.recordPhase(ctx, semconv.PublishPhasePreCommit, time.Since(t2))
@@ -289,10 +299,10 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 	// Phase 3: DoCommit
 	t3 := time.Now()
 
-	if err := s.runPhase3(ctx, rid, gen, m, participants); err != nil {
+	if err := s.runPhase3(ctx, rid, gen, m, expected); err != nil {
 		rl.Warn("do_commit timeout: marking all players dirty", zap.Error(err))
 
-		for _, id := range participants {
+		for _, id := range expected {
 			s.roster.MarkDirty(id)
 		}
 
@@ -312,10 +322,9 @@ func (s *Soloist) runRound(ctx context.Context, m maestro.Manifest, expected []s
 	return nil
 }
 
-// runPhase1 drives CanCommit and returns the players still following the
-// round. In strict mode that is always the full expected set (anything less
-// is an error). With AllowPartialCommit it is the subset that voted OK.
-func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) ([]string, error) {
+// runPhase1 drives CanCommit. Every expected player must vote OK; anything
+// less aborts the round.
+func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) error {
 	voteSub := goflux.BindSubscriber(s.tr.Vote.Subscriber, s.tr.Subjects.RoundVote(rid))
 
 	cctx, cancel := context.WithTimeout(ctx, s.opts.CanCommitTimeout)
@@ -323,7 +332,7 @@ func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestr
 
 	agg, err := transport.NewVoteAggregator(cctx, voteSub, expected, func(v transport.Vote) string { return v.InstanceID })
 	if err != nil {
-		return nil, fmt.Errorf("can_commit agg: %w", err)
+		return fmt.Errorf("can_commit agg: %w", err)
 	}
 
 	if err := s.tr.CanCommit.Publish(ctx, s.tr.Subjects.RoundCanCommit(rid), transport.CanCommit{
@@ -333,56 +342,22 @@ func (s *Soloist) runPhase1(ctx context.Context, rid string, gen int64, m maestr
 		Manifest:       m,
 		DeadlineUnixMs: time.Now().Add(s.opts.CanCommitTimeout).UnixMilli(),
 	}); err != nil {
-		return nil, fmt.Errorf("can_commit publish: %w", err)
-	}
-
-	if s.opts.AllowPartialCommit {
-		res, complete := agg.WaitPartial(cctx)
-		s.logVoteRejections(rid, "can_commit", res)
-
-		ok := make([]string, 0, len(res))
-
-		for id, v := range res {
-			if v.OK {
-				ok = append(ok, id)
-			}
-		}
-
-		sort.Strings(ok)
-		s.markAbsentDirty(rid, "can_commit", expected, ok)
-
-		if len(ok) == 0 {
-			return nil, noneUsable("can_commit", "accepted the round", len(res), len(expected))
-		}
-
-		if !complete || len(ok) != len(expected) {
-			s.l.Info("can_commit partial: proceeding with the players that accepted",
-				zap.String("rid", rid),
-				zap.Int("accepted", len(ok)),
-				zap.Int("expected", len(expected)),
-			)
-		}
-
-		return ok, nil
+		return fmt.Errorf("can_commit publish: %w", err)
 	}
 
 	res, err := agg.Wait(cctx)
 	if err != nil {
-		return nil, fmt.Errorf("can_commit wait: %w", err)
+		return fmt.Errorf("can_commit wait: %w", err)
 	}
 
 	s.logVoteRejections(rid, "can_commit", res)
 
-	if err := checkVotes("can_commit", res, expected); err != nil {
-		return nil, err
-	}
-
-	return expected, nil
+	return checkVotes("can_commit", res, expected)
 }
 
-// runPhase2 drives PreCommit (stage) and returns the players that
-// successfully staged. Semantics mirror runPhase1.
-func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string, stageTimeout time.Duration) ([]string, error) {
+// runPhase2 drives PreCommit (stage). Semantics mirror runPhase1: every
+// expected player must stage successfully.
+func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string, stageTimeout time.Duration) error {
 	stagedSub := goflux.BindSubscriber(s.tr.Staged.Subscriber, s.tr.Subjects.RoundStaged(rid))
 
 	cctx, cancel := context.WithTimeout(ctx, stageTimeout)
@@ -390,7 +365,7 @@ func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestr
 
 	agg, err := transport.NewStagedAggregator(cctx, stagedSub, expected, func(v transport.Staged) string { return v.InstanceID })
 	if err != nil {
-		return nil, fmt.Errorf("pre_commit agg: %w", err)
+		return fmt.Errorf("pre_commit agg: %w", err)
 	}
 
 	if err := s.tr.PreCommit.Publish(ctx, s.tr.Subjects.RoundPreCommit(rid), transport.PreCommit{
@@ -399,73 +374,17 @@ func (s *Soloist) runPhase2(ctx context.Context, rid string, gen int64, m maestr
 		Target:         m.Version,
 		DeadlineUnixMs: time.Now().Add(stageTimeout).UnixMilli(),
 	}); err != nil {
-		return nil, fmt.Errorf("pre_commit publish: %w", err)
-	}
-
-	if s.opts.AllowPartialCommit {
-		res, complete := agg.WaitPartial(cctx)
-		s.logStagedRejections(rid, "pre_commit", res)
-
-		ok := make([]string, 0, len(res))
-
-		for id, v := range res {
-			if v.OK {
-				ok = append(ok, id)
-			}
-		}
-
-		sort.Strings(ok)
-		s.markAbsentDirty(rid, "pre_commit", expected, ok)
-
-		if len(ok) == 0 {
-			return nil, noneUsable("pre_commit", "staged the snapshot", len(res), len(expected))
-		}
-
-		if !complete || len(ok) != len(expected) {
-			s.l.Info("pre_commit partial: proceeding with the players that staged",
-				zap.String("rid", rid),
-				zap.Int("staged", len(ok)),
-				zap.Int("expected", len(expected)),
-			)
-		}
-
-		return ok, nil
+		return fmt.Errorf("pre_commit publish: %w", err)
 	}
 
 	res, err := agg.Wait(cctx)
 	if err != nil {
-		return nil, fmt.Errorf("pre_commit wait: %w", err)
+		return fmt.Errorf("pre_commit wait: %w", err)
 	}
 
 	s.logStagedRejections(rid, "pre_commit", res)
 
-	if err := checkStaged("pre_commit", res, expected); err != nil {
-		return nil, err
-	}
-
-	return expected, nil
-}
-
-// markAbsentDirty flags every player in expected that is not in kept, so the
-// roster monitor resyncs it once it is healthy again.
-func (s *Soloist) markAbsentDirty(rid, phase string, expected, kept []string) {
-	keep := make(map[string]struct{}, len(kept))
-	for _, id := range kept {
-		keep[id] = struct{}{}
-	}
-
-	for _, id := range expected {
-		if _, ok := keep[id]; ok {
-			continue
-		}
-
-		s.l.Warn("player dropped from round; marking dirty for resync",
-			zap.String("rid", rid),
-			zap.String("phase", phase),
-			zap.String("player", id),
-		)
-		s.roster.MarkDirty(id)
-	}
+	return checkStaged("pre_commit", res, expected)
 }
 
 func (s *Soloist) runPhase3(ctx context.Context, rid string, gen int64, m maestro.Manifest, expected []string) error {
@@ -639,26 +558,4 @@ func (s *Soloist) runMonitor(ctx context.Context) error {
 			s.tryResync(ctx)
 		}
 	}
-}
-
-// noneUsable renders a phase failure where no player is usable, separating
-// silence from rejection.
-//
-// The two demand opposite responses — a fleet that answers and refuses is
-// healthy and telling you the payload is wrong; a fleet that says nothing is
-// unreachable, or the soloist was not listening when it replied. Collapsing
-// them into one "no player accepted" message sent debugging in the wrong
-// direction for a subscription race that was entirely the soloist's fault.
-func noneUsable(phase, verb string, responded, expected int) error {
-	if responded == 0 {
-		return fmt.Errorf(
-			"%s: no player responded (0/%d); the fleet is unreachable or replies are not being received",
-			phase, expected,
-		)
-	}
-
-	return fmt.Errorf(
-		"%s: %d/%d players responded but none %s",
-		phase, responded, expected, verb,
-	)
 }

@@ -71,6 +71,17 @@ type Heartbeat struct {
 	// out HeartbeatWindow, so it is excluded from the next round's expected
 	// set rather than needing to be tolerated as a non-responder in one.
 	Leaving bool `msgpack:"leaving,omitempty"`
+	// NotWired marks a player that is alive but whose round subscriptions are
+	// not established yet, so it cannot answer a round. The soloist keeps it
+	// in the roster (it is a real player, and it is tracked for resync) but
+	// leaves it out of the expected set, because counting a player that
+	// provably cannot vote would abort every round until it finishes starting.
+	//
+	// The sense is inverted — "not wired" rather than "wired" — so that the
+	// zero value means eligible. A heartbeat from a player built against an
+	// older version of this struct decodes with the field absent, and must be
+	// treated as a full participant rather than silently excluded forever.
+	NotWired bool `msgpack:"not_wired,omitempty"`
 }
 
 // Per-type codec singletons. Backed by vmihailenco/msgpack/v5 via foomo/goencode.
