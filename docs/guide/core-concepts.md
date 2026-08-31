@@ -33,7 +33,7 @@ sequenceDiagram
   P ->> B: GET each blob (parallel, DownloadConcurrency)
   P ->> P: StageHandler.Stage(v, manifest, src)
   P -->> S: Staged{ok}
-  Note over S, P: Phase 3 — DoCommit (atomic activation)
+  Note over S, P: Phase 3 — DoCommit (each player activates, then confirms)
   S ->> P: DoCommit{rid, target}
   P ->> P: StageHandler.Activate(v)
   P -->> S: Committed{ok}
@@ -68,6 +68,25 @@ state), but phase 3 is a one-way door — a player that already ran
 `Activate` cannot be told to un-activate. Rather than invent a rollback,
 the protocol accepts the player is now ahead and lets the roster's
 [resync](#resync) mechanism catch up any stragglers instead.
+
+Phase 3 *does* collect a confirmation from every player (`Committed`), so
+the Soloist learns exactly who switched. What that confirmation cannot do
+is make the switch simultaneous: it necessarily arrives after the player
+has already activated, so by the time a failure is known, the other
+players are serving the new version.
+
+::: tip Why not a fourth "everyone is ready, now switch" phase?
+It would move the one-way door, not remove it — some player still has to
+act first on phase 4 and can fail after its peers have acted. This is the
+general shape of atomic commit: a protocol can guarantee agreement on the
+*decision* (which 3PC does here — every player accepted at `CanCommit` and
+staged at `PreCommit`), but not simultaneity of its *effect* across
+independent processes.
+
+If your clients need one global version at an instant, enforce it on the
+read path instead: return the served `Version` in the response and let the
+caller pin it, rather than expecting the replicas to flip as one.
+:::
 
 ## Abort path
 

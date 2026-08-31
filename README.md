@@ -68,7 +68,7 @@ sequenceDiagram
   P ->> B: GET each blob (parallel)
   P ->> P: StageHandler.Stage(v, manifest, src)
   P -->> S: Staged{ok=true}
-  Note over S, P: Phase 3 — DoCommit (atomic activation)
+  Note over S, P: Phase 3 — DoCommit (each player activates, then confirms)
   S ->> P: DoCommit{rid, target=v}
   P ->> P: StageHandler.Activate(v)
   P -->> S: Committed{ok=true}
