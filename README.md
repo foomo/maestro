@@ -15,8 +15,8 @@
 
 Replicate a single in-memory state from one writer to many readers, atomically. The state is whatever Go
 value your service holds in memory — a catalog, a routing table, a feature flag set. Maestro coordinates a three-phase
-commit so every reader either flips to the new version together or keeps the old one; partial updates are not
-observable. Bytes flow through a pluggable
+commit so every reader either flips to the new version together or keeps the old one; no reader ever serves a
+half-applied update. Bytes flow through a pluggable
 `BlobStore` (HTTP, S3, …); only control plane traffic touches the message bus (NATS today).
 
 ## Architecture

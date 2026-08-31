@@ -4,7 +4,7 @@ layout: home
 hero:
   name: maestro
   text: One soloist writes the score. Every player turns the page together.
-  tagline: Atomic in-memory state replication for Go, from one writer to every replica. Every reader flips to the new version together, or keeps the old one — partial updates are never observable.
+  tagline: Atomic in-memory state replication for Go, from one writer to every replica. Every reader flips to the new version together, or keeps the old one — no reader ever serves a half-applied update.
   image:
     src: /logo.png
     alt: maestro
