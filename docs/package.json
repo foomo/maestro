@@ -1,0 +1,16 @@
+{
+	"name": "maestro",
+	"private": true,
+	"devDependencies": {
+		"micromark-util-decode-string": "2.0.1",
+		"@catppuccin/vitepress": "0.1.4",
+		"mermaid": "11.16.1",
+		"vitepress": "1.6.4",
+		"vitepress-plugin-mermaid": "2.0.17"
+	},
+	"scripts": {
+		"dev": "vitepress dev",
+		"build": "vitepress build",
+		"preview": "vitepress preview"
+	}
+}

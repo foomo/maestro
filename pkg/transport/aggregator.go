@@ -1,0 +1,104 @@
+package transport
+
+import (
+	"context"
+	"maps"
+	"sync"
+
+	"github.com/foomo/goflux"
+)
+
+// Aggregator collects messages from a goflux.BoundSubscriber, keyed by a
+// per-message identity function, until it has received exactly one message
+// from each expected key or the supplied context is cancelled.
+//
+// Once all expected messages are received, Wait returns the per-key map.
+// The subscription is torn down after Wait returns.
+type Aggregator[T any] struct {
+	mu       sync.Mutex
+	received map[string]T
+	expected map[string]struct{}
+	keyOf    func(T) string
+	done     chan struct{}
+	cancel   context.CancelFunc
+}
+
+// NewAggregator starts consuming from sub immediately.  expected is the set of
+// keys that must arrive before Wait unblocks.  keyOf extracts the key from a
+// received message.
+func NewAggregator[T any](ctx context.Context, sub goflux.BoundSubscriber[T], expected []string, keyOf func(T) string) (*Aggregator[T], error) {
+	subCtx, cancel := context.WithCancel(ctx) //nolint:gosec //G118
+
+	a := &Aggregator[T]{
+		received: make(map[string]T, len(expected)),
+		expected: make(map[string]struct{}, len(expected)),
+		keyOf:    keyOf,
+		done:     make(chan struct{}),
+		cancel:   cancel,
+	}
+	for _, k := range expected {
+		a.expected[k] = struct{}{}
+	}
+
+	go func() {
+		_ = sub.Subscribe(subCtx, func(_ context.Context, msg goflux.Message[T]) error {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+
+			k := a.keyOf(msg.Payload)
+			if _, want := a.expected[k]; !want {
+				return nil
+			}
+
+			if _, dup := a.received[k]; dup {
+				return nil
+			}
+
+			a.received[k] = msg.Payload
+			if len(a.received) == len(a.expected) {
+				select {
+				case <-a.done:
+				default:
+					close(a.done)
+				}
+			}
+
+			return nil
+		})
+	}()
+
+	return a, nil
+}
+
+// Wait blocks until all expected messages have arrived or ctx is cancelled.
+// It cancels the underlying subscription before returning.
+func (a *Aggregator[T]) Wait(ctx context.Context) (map[string]T, error) {
+	defer a.cancel()
+
+	select {
+	case <-a.done:
+		a.mu.Lock()
+		defer a.mu.Unlock()
+
+		out := make(map[string]T, len(a.received))
+		maps.Copy(out, a.received)
+
+		return out, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// Per-message-type convenience constructors.
+
+func NewVoteAggregator(ctx context.Context, sub goflux.BoundSubscriber[Vote], expected []string, keyOf func(Vote) string) (*Aggregator[Vote], error) {
+	return NewAggregator[Vote](ctx, sub, expected, keyOf)
+}
+
+func NewStagedAggregator(ctx context.Context, sub goflux.BoundSubscriber[Staged], expected []string, keyOf func(Staged) string) (*Aggregator[Staged], error) {
+	return NewAggregator[Staged](ctx, sub, expected, keyOf)
+}
+
+func NewCommittedAggregator(ctx context.Context, sub goflux.BoundSubscriber[Committed], expected []string, keyOf func(Committed) string) (*Aggregator[Committed], error) {
+	return NewAggregator[Committed](ctx, sub, expected, keyOf)
+}
