@@ -23,9 +23,13 @@ type Aggregator[T any] struct {
 	cancel   context.CancelFunc
 }
 
-// NewAggregator starts consuming from sub immediately.  expected is the set of
-// keys that must arrive before Wait unblocks.  keyOf extracts the key from a
-// received message.
+// NewAggregator subscribes to sub and blocks until the subscription is
+// confirmed live at the broker before returning — callers publish a request
+// on the same subject right after, and an unconfirmed subscription would
+// race that publish (core NATS drops messages with no matching subscriber,
+// silently and on neither side). expected is the set of keys that must
+// arrive before Wait unblocks. keyOf extracts the key from a received
+// message.
 func NewAggregator[T any](ctx context.Context, sub goflux.BoundSubscriber[T], expected []string, keyOf func(T) string) (*Aggregator[T], error) {
 	subCtx, cancel := context.WithCancel(ctx) //nolint:gosec //G118
 
@@ -40,8 +44,10 @@ func NewAggregator[T any](ctx context.Context, sub goflux.BoundSubscriber[T], ex
 		a.expected[k] = struct{}{}
 	}
 
+	ready := make(chan struct{})
+
 	go func() {
-		_ = sub.Subscribe(subCtx, func(_ context.Context, msg goflux.Message[T]) error {
+		_ = sub.SubscribeWithReady(subCtx, func(_ context.Context, msg goflux.Message[T]) error {
 			a.mu.Lock()
 			defer a.mu.Unlock()
 
@@ -64,8 +70,16 @@ func NewAggregator[T any](ctx context.Context, sub goflux.BoundSubscriber[T], ex
 			}
 
 			return nil
-		})
+		}, func() { close(ready) })
 	}()
+
+	select {
+	case <-ready:
+	case <-subCtx.Done():
+		cancel()
+
+		return nil, subCtx.Err()
+	}
 
 	return a, nil
 }

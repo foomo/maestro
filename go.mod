@@ -6,8 +6,8 @@ require (
 	github.com/foomo/go v0.16.0
 	github.com/foomo/goencode v0.2.0
 	github.com/foomo/goencode/msgpack/vmihailenco v0.0.0-20260421153701-f7050a309e54
-	github.com/foomo/goflux v0.6.0
-	github.com/foomo/goflux/transport/nats v0.6.0
+	github.com/foomo/goflux v0.7.0
+	github.com/foomo/goflux/transport/nats v0.7.0
 	github.com/foomo/gofuncy v0.4.0
 	github.com/nats-io/nats-server/v2 v2.14.6
 	github.com/nats-io/nats.go v1.53.1

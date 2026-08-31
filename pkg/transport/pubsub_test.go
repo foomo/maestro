@@ -29,15 +29,20 @@ func TestPubSubRoundTrip(t *testing.T) {
 
 	got := make(chan transport.Vote, 1)
 	ctx := t.Context()
+	ready := make(chan struct{})
 
 	go func() {
-		_ = sub.Subscribe(ctx, func(_ context.Context, v goflux.Message[transport.Vote]) error {
+		_ = sub.SubscribeWithReady(ctx, func(_ context.Context, v goflux.Message[transport.Vote]) error {
 			got <- v.Payload
 			return nil
-		})
+		}, func() { close(ready) })
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for subscription to become ready")
+	}
 
 	want := transport.Vote{RoundID: "r", InstanceID: "p", OK: true}
 	if err := pub.Publish(ctx, want); err != nil {
