@@ -1,4 +1,4 @@
-package maestro_test
+package tests_test
 
 import (
 	"context"
@@ -284,8 +284,10 @@ func TestPlayerGracefulCloseExcludesFromNextRound(t *testing.T) {
 
 	nc1 := dialNATS(t, url)
 	pl1 := newPlayer(t, nc1, "p1", bs, h1)
+
 	ctx1, cancel1 := context.WithCancel(t.Context())
 	go pl1.Start(ctx1) //nolint:errcheck
+
 	testingx.WaitFor(t, 2*time.Second, func() bool { return pl1.Wired() })
 
 	p2 := startPlayer(t, url, "p2", bs, h2)

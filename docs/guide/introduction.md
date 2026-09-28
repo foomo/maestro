@@ -34,8 +34,8 @@ maestro replicates a value from one writer (the **Soloist**) to many
 readers (**Players**) using a three-phase commit (3PC) over NATS. Readers
 vote on whether they can accept a new version before anyone commits to it;
 if any reader votes no, or fails during staging, the round aborts and every
-reader keeps what it had. There is no partial rollout state that a client
-can observe.
+reader keeps what it had. No reader ever serves a half-applied update — it
+is on the old version or the new one, never in between.
 
 ```
             ┌──────────┐  heartbeats (NATS)   ┌─────────┐
@@ -77,6 +77,17 @@ and how to decode them in your [`StageHandler`](/guide/stagehandler).
 - **Not a database.** There's no query interface, no partial reads, no
   history beyond the current and (briefly) prior version. Forward-only: a
   bad publish is fixed by the next publish, not a rollback.
+- **Not zero-skew across readers.** Each reader is atomic — it serves the
+  old version or the new one, never a mixture. Phases 1 and 2 are
+  reversible: any rejection triggers `Abort`, and every reader discards its
+  staged copy having never served it. Phase 3 is not — once a reader runs
+  `Activate`, no message un-activates it. Readers do confirm the switch
+  (`Committed`), but that confirmation necessarily arrives *after* the
+  irreversible act, so a reader that fails late is marked dirty and
+  [resynced](/guide/core-concepts#resync) forward rather than the round
+  being rolled back. Two readers can briefly report different versions in
+  that window. If you need a client to see one global version at an
+  instant, put the version in the response and let the caller pin it.
 - **Not for large continuous data.** Manifests are versioned snapshots.
   If your workload is a high-frequency stream, this is the wrong tool —
   reach for NATS JetStream, Kafka, or similar.

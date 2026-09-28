@@ -39,7 +39,10 @@ type Staged struct {
 	Err        string `msgpack:"err,omitempty"`
 }
 
-// DoCommit instructs players to atomically activate the staged version.
+// DoCommit instructs each player to activate the staged version. Activation
+// is atomic within a player — it serves the old version or the new one, never
+// a mixture — but is not simultaneous across players: each activates when it
+// receives this, and confirms with a Committed afterwards.
 type DoCommit struct {
 	RoundID string          `msgpack:"rid"`
 	Gen     int64           `msgpack:"gen"`

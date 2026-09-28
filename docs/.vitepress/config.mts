@@ -4,7 +4,8 @@ import { withMermaid } from 'vitepress-plugin-mermaid';
 // https://vitepress.dev/reference/site-config
 const config: UserConfig = {
 	title: 'maestro',
-	description: 'Atomic in-memory state replication for Go, over NATS',
+	description:
+		'Atomic in-memory state replication for Go, from one writer to every replica',
 	lang: "en-US",
 	lastUpdated: true,
 	appearance: "dark",
@@ -100,7 +101,8 @@ const config: UserConfig = {
 			'meta',
 			{
 				property: 'og:description',
-				content: 'Atomic in-memory state replication for Go, over NATS',
+				content:
+					'One soloist writes the score. Every player turns the page together. Atomic in-memory state replication for Go.',
 			},
 		],
 		['meta', { name: 'twitter:card', content: 'summary_large_image' }],

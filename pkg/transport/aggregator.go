@@ -31,7 +31,7 @@ type Aggregator[T any] struct {
 // arrive before Wait unblocks. keyOf extracts the key from a received
 // message.
 func NewAggregator[T any](ctx context.Context, sub goflux.BoundSubscriber[T], expected []string, keyOf func(T) string) (*Aggregator[T], error) {
-	subCtx, cancel := context.WithCancel(ctx) //nolint:gosec //G118
+	subCtx, cancel := context.WithCancel(ctx)
 
 	a := &Aggregator[T]{
 		received: make(map[string]T, len(expected)),

@@ -2,6 +2,7 @@ package transport
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -23,9 +24,9 @@ const (
 // sharing a NATS cluster with unrelated services. Maestro's subjects are
 // single-token-rooted ("round", "player") and its wildcard subscriptions
 // are broad, so on a shared bus they both risk colliding with another
-// service's namespace and, worse, allow two maestro fleets on the same
-// cluster to enrol each other's players into their rosters. A prefix
-// scopes a fleet so neither can happen.
+// service's namespace and, worse, allow two maestro deployments on the
+// same cluster to enrol each other's players into their rosters. A prefix
+// scopes a deployment so neither can happen.
 type Subjects struct {
 	// prefix is stored already dot-terminated (or empty) so every
 	// builder is a plain concatenation and no builder has to re-derive
@@ -39,7 +40,7 @@ type Subjects struct {
 // prefix may contain multiple dot-separated tokens ("catalogue.maestro").
 // It is validated because an invalid prefix does not fail loudly at
 // publish time — NATS would simply route nothing, which presents as a
-// fleet where every round times out despite every player being healthy.
+// deployment where every round times out despite every player being healthy.
 func NewSubjects(prefix string) (Subjects, error) {
 	if prefix == "" {
 		return Subjects{}, nil
@@ -81,10 +82,8 @@ func validatePrefix(prefix string) error {
 		return fmt.Errorf("maestro: subject prefix %q must not contain whitespace", prefix)
 	}
 
-	for _, token := range strings.Split(trimmed, ".") {
-		if token == "" {
-			return fmt.Errorf("maestro: subject prefix %q has an empty token", prefix)
-		}
+	if slices.Contains(strings.Split(trimmed, "."), "") {
+		return fmt.Errorf("maestro: subject prefix %q has an empty token", prefix)
 	}
 
 	return nil
@@ -110,6 +109,7 @@ func (s Subjects) RoundDoCommitWildcard() string  { return s.roundWildcard("do_c
 func (s Subjects) RoundAbortWildcard() string     { return s.roundWildcard("abort") }
 
 // Per-round subject builders.
+
 func (s Subjects) RoundCanCommit(rid string) string { return s.round(rid, "can_commit") }
 func (s Subjects) RoundVote(rid string) string      { return s.round(rid, "vote") }
 func (s Subjects) RoundPreCommit(rid string) string { return s.round(rid, "pre_commit") }
@@ -121,7 +121,7 @@ func (s Subjects) RoundAbort(rid string) string     { return s.round(rid, "abort
 // RIDFromSubject extracts the round id from a subject this Subjects
 // would have produced. Returns "" when subject does not belong to this
 // prefix, which is also how a message that leaked in from another
-// maestro fleet on a shared bus is rejected.
+// maestro deployment on a shared bus is rejected.
 func (s Subjects) RIDFromSubject(subject string) string {
 	want := s.prefix + segmentRound + "."
 	if !strings.HasPrefix(subject, want) {
@@ -134,6 +134,28 @@ func (s Subjects) RIDFromSubject(subject string) string {
 	}
 
 	return before
+}
+
+// Template returns the low-cardinality template for subject, replacing its
+// round id with "*" (e.g. "round.<rid>.vote" -> "round.*.vote"). Returns ""
+// for a subject that is not a round subject under this prefix — such
+// subjects (e.g. player.heartbeat) are already stable and need no
+// templating.
+//
+// Intended for [github.com/foomo/goflux.WithDestinationTemplate], so metrics
+// record one series per phase instead of one per round.
+func (s Subjects) Template(subject string) string {
+	want := s.prefix + segmentRound + "."
+	if !strings.HasPrefix(subject, want) {
+		return ""
+	}
+
+	_, phase, ok := strings.Cut(subject[len(want):], ".")
+	if !ok {
+		return ""
+	}
+
+	return want + "*." + phase
 }
 
 func (s Subjects) round(rid, phase string) string {

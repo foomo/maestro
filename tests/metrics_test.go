@@ -1,4 +1,4 @@
-package maestro_test
+package tests_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 )
 
 func TestPublishRecordsOutcomeMetrics(t *testing.T) {
-	const prefix = "metrics.fleet"
+	const prefix = "metrics.deploy"
 
 	url := testutil.StartNATS(t)
 	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})

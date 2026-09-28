@@ -85,7 +85,7 @@ func (m *metrics) recordOutcome(ctx context.Context, outcome string) {
 
 // recordPhase records how long one phase took.
 //
-// Phase durations are the signal that distinguishes a fleet that is slow
+// Phase durations are the signal that distinguishes a player that is slow
 // from one that is broken: a pre_commit that grows with snapshot size is
 // expected, one that grows with replica count is not.
 func (m *metrics) recordPhase(ctx context.Context, phase string, d time.Duration) {
@@ -101,7 +101,7 @@ func (m *metrics) recordPhase(ctx context.Context, phase string, d time.Duration
 // those wired for rounds.
 //
 // Worth watching alongside publish outcomes because players that are alive but
-// still starting up are excluded from the expected set: a fleet stuck in a
+// still starting up are excluded from the expected set: players stuck in a
 // crash-loop can leave this near zero while the outcome counter reports
 // nothing but successes.
 func (m *metrics) recordRoster(ctx context.Context, players int) {
@@ -124,8 +124,8 @@ func (m *metrics) recordCommitted(ctx context.Context, attrs ...attribute.KeyVal
 // canCommitOutcome classifies a phase-1 failure.
 //
 // The distinction that matters operationally is whether players said no
-// or said nothing: a rejection means the fleet is healthy and refusing
-// this payload, silence means the fleet is not answering. They call for
+// or said nothing: a rejection means the players are healthy and refusing
+// this payload, silence means they are not answering. They call for
 // opposite responses, and both currently surface as the same log line.
 func canCommitOutcome(err error) string {
 	if isTimeout(err) {
