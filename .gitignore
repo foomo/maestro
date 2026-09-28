@@ -1,13 +1,21 @@
 .*
-*.zip
-*.tar
-*.tgz
-*.pem
-*.out
+*.lock
 *.log
-bin/
-dist/
-tmp/
+*.pid
+*.retry
+*.tar
+*.gz
+*.out
+*.tgz
+*.zip
+*.key
+*.pem
+*.prof
+*.pprof
+*.profile
+/bin/
+/vendor/
+/tmp/
 
 ## GitHub
 !.github/
