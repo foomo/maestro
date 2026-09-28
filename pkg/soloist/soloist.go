@@ -542,6 +542,7 @@ func (s *Soloist) subscribeHeartbeats(ctx context.Context) error {
 			}
 
 			s.roster.Observe(msg.Payload)
+
 			return nil
 		})
 }

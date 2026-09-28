@@ -1,3 +1,4 @@
+//nolint:testpackage // needs internal access to metrics, newMetrics, canCommitOutcome, preCommitOutcome
 package soloist
 
 import (

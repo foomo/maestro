@@ -9,31 +9,22 @@ bin/
 dist/
 tmp/
 
-## Git
-!.gitignore
-!.gitattributes
-!.gitkeep
-
 ## GitHub
 !.github/
-
-## Mise
-!.mise.toml
-
-## Lefthook
-!.lefthook.yaml
-
-## VSCode
-!.vscode/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.default.json
 
 ## Editorconfig
 !.editorconfig
 
-## Docker
-!.dockerignore
+## Git
+!.gitkeep
+!.gitignore
+!.gitattributes
+
+## Lefthook
+!.lefthook.yaml
+
+## Mise
+!.mise.toml
 
 ## TypeScript
 *.tsbuildinfo

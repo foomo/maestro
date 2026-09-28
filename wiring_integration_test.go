@@ -60,6 +60,7 @@ func TestWiring_StartingPlayerDoesNotBlockPublish(t *testing.T) {
 	if cur := hOK.Current(); cur == nil || cur["doc.bin"] != "wired-only" {
 		t.Fatalf("healthy player has unexpected body: %+v", cur)
 	}
+
 	if s.Current() != v {
 		t.Fatalf("soloist current = %q, want %q", s.Current(), v)
 	}
@@ -139,6 +140,7 @@ func TestWiring_StartingPlayerResyncsAfterwards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
 	}
+
 	testingx.WaitFor(t, 5*time.Second, func() bool { return pOK.CurrentVersion() == v })
 
 	// Now bring up the real player under that same InstanceID. Once it is

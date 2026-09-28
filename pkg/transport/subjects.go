@@ -2,6 +2,7 @@ package transport
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -81,10 +82,8 @@ func validatePrefix(prefix string) error {
 		return fmt.Errorf("maestro: subject prefix %q must not contain whitespace", prefix)
 	}
 
-	for _, token := range strings.Split(trimmed, ".") {
-		if token == "" {
-			return fmt.Errorf("maestro: subject prefix %q has an empty token", prefix)
-		}
+	if slices.Contains(strings.Split(trimmed, "."), "") {
+		return fmt.Errorf("maestro: subject prefix %q has an empty token", prefix)
 	}
 
 	return nil
@@ -110,6 +109,7 @@ func (s Subjects) RoundDoCommitWildcard() string  { return s.roundWildcard("do_c
 func (s Subjects) RoundAbortWildcard() string     { return s.roundWildcard("abort") }
 
 // Per-round subject builders.
+
 func (s Subjects) RoundCanCommit(rid string) string { return s.round(rid, "can_commit") }
 func (s Subjects) RoundVote(rid string) string      { return s.round(rid, "vote") }
 func (s Subjects) RoundPreCommit(rid string) string { return s.round(rid, "pre_commit") }
