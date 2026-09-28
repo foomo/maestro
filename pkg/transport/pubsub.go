@@ -66,6 +66,18 @@ func NewTransportWithPrefix(nc *nats.Conn, prefix string, opts ...natsgoflux.Opt
 }
 
 func newTransport(nc *nats.Conn, subjects Subjects, opts ...natsgoflux.Option) Transport {
+	// Round subjects carry a fresh round id on every publish, so without a
+	// destination template every round mints a new metric series that is
+	// never reused. Set the default here, before opts, so a caller-supplied
+	// natsgoflux.WithTelemetry still wins — goflux applies Options in order
+	// and the last one wins.
+	tel, err := goflux.NewTelemetry(goflux.WithDestinationTemplate(subjects.Template))
+	if err != nil {
+		tel = goflux.NewNoopTelemetry()
+	}
+
+	opts = append([]natsgoflux.Option{natsgoflux.WithTelemetry(tel)}, opts...)
+
 	return Transport{
 		CanCommit: newTopic(nc, CanCommitCodec, opts...),
 		PreCommit: newTopic(nc, PreCommitCodec, opts...),

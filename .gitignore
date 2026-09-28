@@ -13,9 +13,10 @@
 *.prof
 *.pprof
 *.profile
-/bin/
-/vendor/
-/tmp/
+bin/
+dist/
+vendor/
+tmp/
 
 ## GitHub
 !.github/

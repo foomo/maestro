@@ -136,6 +136,28 @@ func (s Subjects) RIDFromSubject(subject string) string {
 	return before
 }
 
+// Template returns the low-cardinality template for subject, replacing its
+// round id with "*" (e.g. "round.<rid>.vote" -> "round.*.vote"). Returns ""
+// for a subject that is not a round subject under this prefix — such
+// subjects (e.g. player.heartbeat) are already stable and need no
+// templating.
+//
+// Intended for [github.com/foomo/goflux.WithDestinationTemplate], so metrics
+// record one series per phase instead of one per round.
+func (s Subjects) Template(subject string) string {
+	want := s.prefix + segmentRound + "."
+	if !strings.HasPrefix(subject, want) {
+		return ""
+	}
+
+	_, phase, ok := strings.Cut(subject[len(want):], ".")
+	if !ok {
+		return ""
+	}
+
+	return want + "*." + phase
+}
+
 func (s Subjects) round(rid, phase string) string {
 	return s.prefix + segmentRound + "." + rid + "." + phase
 }

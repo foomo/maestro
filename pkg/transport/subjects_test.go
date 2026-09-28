@@ -181,6 +181,61 @@ func TestRIDFromSubject_RoundTrips(t *testing.T) {
 	}
 }
 
+func TestTemplate_Unprefixed(t *testing.T) {
+	var s transport.Subjects
+
+	cases := map[string]string{
+		"round.abc.can_commit": "round.*.can_commit",
+		"round.xyz123.vote":    "round.*.vote",
+		"player.heartbeat":     "",
+		"":                     "",
+		"round.":               "",
+		"round.solo":           "",
+	}
+
+	for in, want := range cases {
+		if got := s.Template(in); got != want {
+			t.Errorf("Template(%q): got %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestTemplate_Prefixed(t *testing.T) {
+	s := transport.MustSubjects("catalogue.maestro")
+
+	cases := map[string]string{
+		"catalogue.maestro.round.abc.can_commit": "catalogue.maestro.round.*.can_commit",
+		"catalogue.maestro.round.xyz123.vote":    "catalogue.maestro.round.*.vote",
+		"catalogue.maestro.player.heartbeat":     "",
+		"round.abc.can_commit":                   "",
+		"other.deploy.round.abc.can_commit":      "",
+	}
+
+	for in, want := range cases {
+		if got := s.Template(in); got != want {
+			t.Errorf("Template(%q): got %q want %q", in, got, want)
+		}
+	}
+}
+
+// Two different round IDs on the same phase must collapse to the identical
+// template — this is the property goflux's WithDestinationTemplate relies on
+// to keep metric cardinality bounded across rounds.
+func TestTemplate_CollapsesAcrossRoundIDs(t *testing.T) {
+	s := transport.MustSubjects("catalogue.maestro")
+
+	a := s.Template(s.RoundVote("11111111111111111111111111111111"))
+	b := s.Template(s.RoundVote("22222222222222222222222222222222"))
+
+	if a != b {
+		t.Errorf("Template differs across round IDs: %q vs %q", a, b)
+	}
+
+	if a != "catalogue.maestro.round.*.vote" {
+		t.Errorf("Template = %q, want %q", a, "catalogue.maestro.round.*.vote")
+	}
+}
+
 // Two deployments on one bus must not see each other's rounds: neither the
 // per-phase wildcards nor the parser may match across prefixes.
 func TestSubjects_DeploymentsAreIsolated(t *testing.T) {
