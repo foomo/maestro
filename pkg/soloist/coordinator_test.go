@@ -17,6 +17,8 @@ import (
 	"github.com/foomo/maestro/pkg/transport"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/require"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // startSoloistForTest wires a soloist with a fresh *nats.Conn + transport bundle.
@@ -299,6 +301,67 @@ func TestSoloistTriggersResyncForStalePlayer(t *testing.T) {
 	testingx.WaitFor(t, 4*time.Second, func() bool {
 		return player.CurrentVersion() == v
 	})
+}
+
+// Acceptance for the roster gauge going stale: a soloist that published into
+// an empty roster must report players that join and get resynced afterwards,
+// and drop those that go away, without another Publish.
+func TestSoloistRosterGaugeWithoutPublish(t *testing.T) {
+	url := testutil.StartNATS(t)
+
+	bs, err := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
+	require.NoError(t, err)
+
+	reader := sdkmetric.NewManualReader()
+
+	s := startSoloistForTest(t, url, soloist.Options{
+		BlobStore:        bs,
+		MeterProvider:    sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)),
+		HeartbeatWindow:  500 * time.Millisecond,
+		RosterScanTick:   150 * time.Millisecond,
+		ResyncDebounce:   100 * time.Millisecond,
+		CanCommitTimeout: 3 * time.Second,
+		DoCommitTimeout:  3 * time.Second,
+	})
+
+	ctx := t.Context()
+
+	go s.Start(ctx) //nolint:errcheck
+
+	testingx.WaitFor(t, 2*time.Second, func() bool { return s.Ready() })
+
+	rosterPlayers := func() int64 {
+		var rm metricdata.ResourceMetrics
+		require.NoError(t, reader.Collect(ctx, &rm))
+
+		for _, sm := range rm.ScopeMetrics {
+			for _, md := range sm.Metrics {
+				if g, ok := md.Data.(metricdata.Gauge[int64]); ok && md.Name == "maestro.roster.players" && len(g.DataPoints) == 1 {
+					return g.DataPoints[0].Value
+				}
+			}
+		}
+
+		return -1
+	}
+
+	v, err := s.Publish(ctx, []soloist.File{{Name: "init.bin", Reader: strings.NewReader("initial")}})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rosterPlayers())
+
+	p1 := newFakePlayer(t, url, "player-1")
+	defer p1.Close()
+
+	p2 := newFakePlayer(t, url, "player-2")
+
+	testingx.WaitFor(t, 4*time.Second, func() bool {
+		return p1.CurrentVersion() == v && p2.CurrentVersion() == v
+	})
+	require.Equal(t, int64(2), rosterPlayers())
+
+	p2.Close()
+
+	testingx.WaitFor(t, 2*time.Second, func() bool { return rosterPlayers() == 1 })
 }
 
 func TestSoloistPublishMultipleFiles(t *testing.T) {

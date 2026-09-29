@@ -9,19 +9,20 @@ import (
 	"time"
 
 	"github.com/foomo/maestro/pkg/semconv"
+	"github.com/foomo/maestro/pkg/transport"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // collect gathers everything recorded through a fresh in-memory reader.
-func collect(t *testing.T) (*metrics, func() metricdata.ResourceMetrics) {
+func collect(t *testing.T, players func() int) (*metrics, func() metricdata.ResourceMetrics) {
 	t.Helper()
 
 	reader := metric.NewManualReader()
 	provider := metric.NewMeterProvider(metric.WithReader(reader))
 
-	m, err := newMetrics(provider)
+	m, err := newMetrics(provider, players)
 	if err != nil {
 		t.Fatalf("newMetrics: %v", err)
 	}
@@ -92,12 +93,11 @@ func TestMetrics_NilIsInert(t *testing.T) {
 
 	m.recordOutcome(context.Background(), semconv.PublishOutcomeSuccess)
 	m.recordPhase(context.Background(), semconv.PublishPhaseTotal, time.Second)
-	m.recordRoster(context.Background(), 3)
 	m.recordCommitted(context.Background())
 }
 
 func TestMetrics_RecordsOutcomesSeparately(t *testing.T) {
-	m, gather := collect(t)
+	m, gather := collect(t, func() int { return 0 })
 	ctx := context.Background()
 
 	m.recordOutcome(ctx, semconv.PublishOutcomeSuccess)
@@ -126,7 +126,7 @@ func TestMetrics_RecordsOutcomesSeparately(t *testing.T) {
 }
 
 func TestMetrics_RecordsPhasesSeparately(t *testing.T) {
-	m, gather := collect(t)
+	m, gather := collect(t, func() int { return 0 })
 	ctx := context.Background()
 
 	for _, phase := range []string{
@@ -155,38 +155,56 @@ func TestMetrics_RecordsPhasesSeparately(t *testing.T) {
 	}
 }
 
-func TestMetrics_RecordsRoster(t *testing.T) {
-	m, gather := collect(t)
-
-	m.recordRoster(context.Background(), 4)
-
-	rm := gather()
-
-	var found bool
-
+// rosterPlayers returns the maestro.roster.players value, or -1 when it
+// was not reported.
+func rosterPlayers(rm metricdata.ResourceMetrics) int64 {
 	for _, sm := range rm.ScopeMetrics {
 		for _, md := range sm.Metrics {
 			if md.Name != "maestro.roster.players" {
 				continue
 			}
 
-			g, ok := md.Data.(metricdata.Gauge[int64])
-			if !ok {
-				continue
-			}
-
-			for _, dp := range g.DataPoints {
-				found = true
-
-				if dp.Value != 4 {
-					t.Errorf("roster players = %d, want 4", dp.Value)
-				}
+			if g, ok := md.Data.(metricdata.Gauge[int64]); ok && len(g.DataPoints) == 1 {
+				return g.DataPoints[0].Value
 			}
 		}
 	}
 
-	if !found {
-		t.Error("maestro.roster.players was not recorded")
+	return -1
+}
+
+// The roster gauge must follow membership as it changes, not as the last
+// Publish saw it: an idle soloist never publishes again, and a gauge frozen
+// at boot reads 0 while players are live and in sync.
+func TestMetrics_RosterFollowsMembership(t *testing.T) {
+	now := time.Now()
+	r := NewRoster(time.Second, nil)
+	r.now = func() time.Time { return now }
+
+	_, gather := collect(t, func() int { return len(r.Participants()) })
+
+	if got := rosterPlayers(gather()); got != 0 {
+		t.Errorf("empty roster = %d, want 0", got)
+	}
+
+	r.Observe(transport.Heartbeat{InstanceID: "p1"})
+	r.Observe(transport.Heartbeat{InstanceID: "p2"})
+	r.Observe(transport.Heartbeat{InstanceID: "p3", NotWired: true})
+
+	if got := rosterPlayers(gather()); got != 2 {
+		t.Errorf("after join = %d, want 2 (unwired excluded)", got)
+	}
+
+	r.Remove("p1")
+
+	if got := rosterPlayers(gather()); got != 1 {
+		t.Errorf("after leave = %d, want 1", got)
+	}
+
+	now = now.Add(2 * time.Second)
+
+	if got := rosterPlayers(gather()); got != 0 {
+		t.Errorf("after expiry = %d, want 0", got)
 	}
 }
 
