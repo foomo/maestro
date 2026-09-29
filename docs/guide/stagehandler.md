@@ -45,10 +45,11 @@ func (h *myHandler) Stage(ctx context.Context, v maestro.Version, m maestro.Mani
 }
 ```
 
-- **`src.Open(name)`** returns a stream whose bytes are already sha256
-  hash-verified against the manifest as you read — a mismatch surfaces as
-  a read error. Don't re-hash; if `Open`/read succeeds, the bytes are the
-  ones the Soloist published under `v`. `src.List()` gives you every file
+- **`src.Open(name)`** returns the file's bytes, already downloaded and
+  sha256-verified against the manifest before `Stage` was called — a
+  mismatch fails the download and `Stage` is never reached. Don't re-hash;
+  if `Open` succeeds, the bytes are the ones the Soloist published under
+  `v`. `Open` errors for a name that is not in the manifest. `src.List()` gives you every file
   name in the manifest, in order, if you don't know the names up front.
 - **Returning an error votes against the round.** The Soloist sees this
   player's `Staged.OK = false`, aborts, and every player (including this
