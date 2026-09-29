@@ -19,6 +19,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// stageReplyMargin is subtracted from the soloist's PreCommit deadline so the
+// Staged reply still lands inside the soloist's wait. The deadline comes from
+// the soloist's wall clock, so clock skew between nodes eats into this margin.
+const stageReplyMargin = 2 * time.Second
+
+// ErrAlreadyStarted is returned when Start is called more than once.
+var ErrAlreadyStarted = errors.New("player: Start already called")
+
 // Player is one of N readers in a maestro deployment.
 type Player struct {
 	opts    Options
@@ -35,6 +43,12 @@ type Player struct {
 	// is what the heartbeat advertises to the soloist's roster.
 	subsLive atomic.Int32
 
+	// inflight is the round whose PreCommit is currently staging, so an Abort
+	// for it can stop the work instead of letting it retry until the deadline
+	// while the next round's PreCommit queues behind it on the subscription.
+	inflightMu sync.Mutex
+	inflight   inflightRound
+
 	cancel        context.CancelFunc
 	done          chan struct{}
 	leaving       chan struct{}
@@ -43,9 +57,6 @@ type Player struct {
 	closeOnce     sync.Once
 }
 
-// ErrAlreadyStarted is returned when Start is called more than once.
-var ErrAlreadyStarted = errors.New("player: Start already called")
-
 type activeSlot struct {
 	version maestro.Version
 }
@@ -53,6 +64,11 @@ type activeSlot struct {
 type stagedSlot struct {
 	rid     string
 	version maestro.Version
+}
+
+type inflightRound struct {
+	rid    string
+	cancel context.CancelFunc
 }
 
 // New constructs a Player. The transport is supplied via opts.Transport — the
@@ -250,8 +266,16 @@ func (p *Player) handlePreCommit(ctx context.Context, pc transport.PreCommit) {
 		return
 	}
 
+	// sctx bounds the staging work; ctx stays for the Staged publish so a
+	// "no" vote still goes out once sctx expires or is aborted.
+	sctx, cancel := p.stageContext(ctx, pc)
+	defer cancel()
+
+	p.setInflight(pc.RoundID, cancel)
+	defer p.clearInflight(pc.RoundID)
+
 	d := newDownloader(p.opts.BlobReader, pc.Target, man, p.opts.DownloadConcurrency, p.l)
-	if err := d.prefetch(ctx); err != nil {
+	if err := d.prefetch(sctx); err != nil {
 		p.l.Error("prefetch failed", zap.String("rid", pc.RoundID), zap.Error(err))
 
 		reply.OK = false
@@ -261,7 +285,7 @@ func (p *Player) handlePreCommit(ctx context.Context, pc transport.PreCommit) {
 		return
 	}
 
-	if err := p.opts.StageHandler.Stage(ctx, pc.Target, man, &fileSource{d: d}); err != nil {
+	if err := p.opts.StageHandler.Stage(sctx, pc.Target, man, &fileSource{d: d}); err != nil {
 		p.l.Error("stage failed", zap.String("rid", pc.RoundID), zap.Error(err))
 
 		reply.OK = false
@@ -352,6 +376,8 @@ func (p *Player) handleAbort(ctx context.Context, ab transport.Abort, rid string
 		zap.String("reason", ab.Reason),
 	)
 
+	p.cancelInflight(rid)
+
 	staged := p.staged.Load()
 	if staged != nil && staged.rid == rid {
 		if err := p.opts.StageHandler.Abort(ctx, staged.version); err != nil {
@@ -367,6 +393,52 @@ func (p *Player) handleAbort(ctx context.Context, ab transport.Abort, rid string
 	}
 
 	p.takePending(rid) // clean up any pending manifest
+}
+
+// stageContext bounds a round's staging by the deadline the soloist sent,
+// minus stageReplyMargin. A zero or already-past deadline falls back to an
+// unbounded ctx, on which the downloader keeps its short bounded retry.
+func (p *Player) stageContext(ctx context.Context, pc transport.PreCommit) (context.Context, context.CancelFunc) {
+	if pc.DeadlineUnixMs == 0 {
+		return context.WithCancel(ctx)
+	}
+
+	deadline := time.UnixMilli(pc.DeadlineUnixMs).Add(-stageReplyMargin)
+	if !time.Now().Before(deadline) {
+		p.l.Warn("pre_commit deadline already past, ignoring it",
+			zap.String("rid", pc.RoundID),
+			zap.Time("deadline", deadline),
+		)
+
+		return context.WithCancel(ctx)
+	}
+
+	return context.WithDeadline(ctx, deadline)
+}
+
+// setInflight records the round currently staging and its cancel func.
+func (p *Player) setInflight(rid string, cancel context.CancelFunc) {
+	p.inflightMu.Lock()
+	p.inflight = inflightRound{rid: rid, cancel: cancel}
+	p.inflightMu.Unlock()
+}
+
+// clearInflight forgets the in-flight round if it's still rid.
+func (p *Player) clearInflight(rid string) {
+	p.inflightMu.Lock()
+	if p.inflight.rid == rid {
+		p.inflight = inflightRound{}
+	}
+	p.inflightMu.Unlock()
+}
+
+// cancelInflight cancels the in-flight round's staging if it's rid.
+func (p *Player) cancelInflight(rid string) {
+	p.inflightMu.Lock()
+	if p.inflight.rid == rid && p.inflight.cancel != nil {
+		p.inflight.cancel()
+	}
+	p.inflightMu.Unlock()
 }
 
 // runHeartbeat publishes a Heartbeat every HeartbeatPeriod with the player's

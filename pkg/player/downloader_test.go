@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/foomo/maestro"
 	"github.com/foomo/maestro/pkg/blobstore"
@@ -115,5 +117,48 @@ func TestDownloaderDetectsHashMismatch(t *testing.T) {
 	d := newDownloader(bs, m.Version, m, 1, nil)
 	if err := d.prefetch(context.Background()); err == nil {
 		t.Fatal("expected hash mismatch")
+	}
+}
+
+func TestDownloaderRetriesUntilCtxDeadline(t *testing.T) {
+	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
+
+	m, err := soloist.IngestFiles(context.Background(), bs, []soloist.File{
+		{Name: "a", Reader: strings.NewReader("alpha")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 4 failures exceed the no-deadline budget of 3; a ctx deadline lifts it.
+	flaky := &flakyReader{inner: bs, failN: 4}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	d := newDownloader(flaky, m.Version, m, 1, nil)
+	if err := d.prefetch(ctx); err != nil {
+		t.Fatalf("prefetch returned %v, want nil after retry", err)
+	}
+
+	if got := flaky.calls.Load(); got != 5 {
+		t.Errorf("Reader calls = %d, want 5 (4 failures + 1 success)", got)
+	}
+
+	// Same outage with a short deadline: gives up at the deadline, no hang.
+	flaky = &flakyReader{inner: bs, failN: math.MaxInt32}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+
+	d = newDownloader(flaky, m.Version, m, 1, nil)
+	if err := d.prefetch(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("prefetch returned %v, want context.DeadlineExceeded", err)
+	}
+
+	if el := time.Since(start); el > 2*time.Second {
+		t.Errorf("prefetch took %v after a 500ms deadline", el)
 	}
 }
