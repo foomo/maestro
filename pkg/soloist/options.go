@@ -17,18 +17,48 @@ type Options struct {
 	// Build it via transport.NewTransport(nc). Required.
 	Transport transport.Transport
 
-	BlobStore        blobstore.BlobStore
-	InstanceID       string
-	HeartbeatWindow  time.Duration
-	RosterScanTick   time.Duration
-	ResyncDebounce   time.Duration
-	CanCommitTimeout time.Duration
-	StageTimeout     func(totalSize int64) time.Duration
-	DoCommitTimeout  time.Duration
+	// BlobStore stores the files of each published version. Required.
+	BlobStore blobstore.BlobStore
 
-	MeterProvider  metric.MeterProvider
+	// InstanceID names the soloist in logs. It plays no part in the
+	// protocol.
+	InstanceID string
+
+	// HeartbeatWindow is how recently a player must have heartbeated to
+	// count as alive. Defaults to 15s.
+	HeartbeatWindow time.Duration
+
+	// RosterScanTick is how often the soloist checks the roster for players
+	// that need a resync. Defaults to 5s.
+	RosterScanTick time.Duration
+
+	// ResyncDebounce is the minimum gap between two resync rounds.
+	// Defaults to 10s.
+	ResyncDebounce time.Duration
+
+	// CanCommitTimeout bounds phase 1. A timeout aborts the round.
+	// Defaults to 10s.
+	CanCommitTimeout time.Duration
+
+	// StageTimeout returns the phase 2 deadline for a manifest of totalSize
+	// bytes. A timeout aborts the round. Defaults to twice the time needed
+	// at 10 MiB/s, clamped to [60s, 30m].
+	StageTimeout func(totalSize int64) time.Duration
+
+	// DoCommitTimeout bounds phase 3. A timeout does not abort the round;
+	// players that did not confirm are resynced later. Defaults to 10s.
+	DoCommitTimeout time.Duration
+
+	// MeterProvider provides the OpenTelemetry meter. Defaults to
+	// otel.GetMeterProvider().
+	MeterProvider metric.MeterProvider
+
+	// TracerProvider provides the OpenTelemetry tracer. Defaults to
+	// otel.GetTracerProvider().
 	TracerProvider trace.TracerProvider
-	Logger         *zap.Logger
+
+	// Logger receives the soloist's logs. Defaults to a no-op logger.
+	Logger *zap.Logger
 }
 
 func (o *Options) applyDefaults() {

@@ -8,6 +8,7 @@ import (
 // Per OTel semconv: https://opentelemetry.io/docs/specs/semconv/errors/
 var ErrorTypeKey = attribute.Key("error.type")
 
+// Attribute keys set on maestro metrics and spans.
 const (
 	AttrPublishOutcome = attribute.Key("maestro.publish.outcome")
 	AttrPublishPhase   = attribute.Key("maestro.publish.phase")
@@ -20,6 +21,10 @@ const (
 	AttrGen            = attribute.Key("maestro.gen")
 )
 
+// Values for the attribute keys above: PublishOutcome* for
+// [AttrPublishOutcome], PublishPhase* for [AttrPublishPhase], StageOutcome*
+// for [AttrStageOutcome], BlobBackend* for [AttrBlobBackend] and BlobOp* for
+// [AttrBlobOp].
 const (
 	PublishOutcomeSuccess           = "success"
 	PublishOutcomeAbortVoteNo       = "abort_vote_no"

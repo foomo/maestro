@@ -8,35 +8,54 @@ import (
 
 // CanCommit is broadcast to all players to open a new commit round.
 type CanCommit struct {
-	RoundID        string           `msgpack:"rid"`
-	Gen            int64            `msgpack:"gen"`
-	Target         maestro.Version  `msgpack:"target"`
-	Manifest       maestro.Manifest `msgpack:"manifest"`
-	DeadlineUnixMs int64            `msgpack:"deadline"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// Gen is the soloist's boot epoch, in Unix milliseconds.
+	Gen int64 `msgpack:"gen"`
+	// Target is the version being committed.
+	Target maestro.Version `msgpack:"target"`
+	// Manifest describes the files of Target.
+	Manifest maestro.Manifest `msgpack:"manifest"`
+	// DeadlineUnixMs is when the soloist stops waiting for replies, in Unix
+	// milliseconds.
+	DeadlineUnixMs int64 `msgpack:"deadline"`
 }
 
 // Vote is sent by each player in response to CanCommit.
 type Vote struct {
-	RoundID    string `msgpack:"rid"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// InstanceID identifies the replying player.
 	InstanceID string `msgpack:"iid"`
-	OK         bool   `msgpack:"ok"`
-	Err        string `msgpack:"err,omitempty"`
+	// OK reports whether the player votes to commit.
+	OK bool `msgpack:"ok"`
+	// Err describes the failure when OK is false.
+	Err string `msgpack:"err,omitempty"`
 }
 
 // PreCommit tells players to stage (download) the target version.
 type PreCommit struct {
-	RoundID        string          `msgpack:"rid"`
-	Gen            int64           `msgpack:"gen"`
-	Target         maestro.Version `msgpack:"target"`
-	DeadlineUnixMs int64           `msgpack:"deadline"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// Gen is the soloist's boot epoch, in Unix milliseconds.
+	Gen int64 `msgpack:"gen"`
+	// Target is the version being committed.
+	Target maestro.Version `msgpack:"target"`
+	// DeadlineUnixMs is when the soloist stops waiting for replies, in Unix
+	// milliseconds.
+	DeadlineUnixMs int64 `msgpack:"deadline"`
 }
 
 // Staged is sent by each player after staging completes.
 type Staged struct {
-	RoundID    string `msgpack:"rid"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// InstanceID identifies the replying player.
 	InstanceID string `msgpack:"iid"`
-	OK         bool   `msgpack:"ok"`
-	Err        string `msgpack:"err,omitempty"`
+	// OK reports whether the player staged the round's target version.
+	OK bool `msgpack:"ok"`
+	// Err describes the failure when OK is false.
+	Err string `msgpack:"err,omitempty"`
 }
 
 // DoCommit instructs each player to activate the staged version. Activation
@@ -44,30 +63,44 @@ type Staged struct {
 // a mixture — but is not simultaneous across players: each activates when it
 // receives this, and confirms with a Committed afterwards.
 type DoCommit struct {
-	RoundID string          `msgpack:"rid"`
-	Gen     int64           `msgpack:"gen"`
-	Target  maestro.Version `msgpack:"target"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// Gen is the soloist's boot epoch, in Unix milliseconds.
+	Gen int64 `msgpack:"gen"`
+	// Target is the version being committed.
+	Target maestro.Version `msgpack:"target"`
 }
 
 // Committed is sent by each player after the commit (or failure).
 type Committed struct {
-	RoundID    string `msgpack:"rid"`
+	// RoundID identifies the round.
+	RoundID string `msgpack:"rid"`
+	// InstanceID identifies the replying player.
 	InstanceID string `msgpack:"iid"`
-	OK         bool   `msgpack:"ok"`
-	Err        string `msgpack:"err,omitempty"`
+	// OK reports whether the player activated the round's target version.
+	OK bool `msgpack:"ok"`
+	// Err describes the failure when OK is false.
+	Err string `msgpack:"err,omitempty"`
 }
 
 // Abort is broadcast to cancel an in-progress round.
 type Abort struct {
+	// RoundID identifies the round.
 	RoundID string `msgpack:"rid"`
-	Gen     int64  `msgpack:"gen"`
-	Reason  string `msgpack:"reason"`
+	// Gen is the soloist's boot epoch, in Unix milliseconds.
+	Gen int64 `msgpack:"gen"`
+	// Reason describes why the round was aborted.
+	Reason string `msgpack:"reason"`
 }
 
 // Heartbeat is periodically published by each player.
 type Heartbeat struct {
-	InstanceID     string          `msgpack:"iid"`
-	GenAcked       int64           `msgpack:"gen_acked"`
+	// InstanceID identifies the player.
+	InstanceID string `msgpack:"iid"`
+	// GenAcked is reserved for generation acknowledgement.
+	// [github.com/foomo/maestro/pkg/player.Player] always sends 0.
+	GenAcked int64 `msgpack:"gen_acked"`
+	// CurrentVersion is the version the player has active, or "" if none.
 	CurrentVersion maestro.Version `msgpack:"current_version"`
 	// Leaving marks a player's final heartbeat before a graceful shutdown.
 	// The soloist removes it from the roster immediately instead of waiting

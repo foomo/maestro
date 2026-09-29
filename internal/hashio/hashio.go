@@ -7,16 +7,20 @@ import (
 	"io"
 )
 
+// Writer is an [io.WriteCloser] that forwards writes to a sink while hashing
+// the bytes the sink accepted. It is not safe for concurrent use.
 type Writer struct {
 	sink io.Writer
 	h    hash.Hash
 	sum  string
 }
 
+// NewWriter returns a Writer that forwards to sink.
 func NewWriter(sink io.Writer) *Writer {
 	return &Writer{sink: sink, h: sha256.New()}
 }
 
+// Write writes p to the sink and hashes the n bytes it accepted.
 func (w *Writer) Write(p []byte) (int, error) {
 	n, err := w.sink.Write(p)
 	if n > 0 {
@@ -26,6 +30,8 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Close finalizes the digest reported by [Writer.Sum] and closes the sink if
+// it implements [io.Closer].
 func (w *Writer) Close() error {
 	w.sum = hex.EncodeToString(w.h.Sum(nil))
 	if c, ok := w.sink.(io.Closer); ok {
@@ -35,12 +41,15 @@ func (w *Writer) Close() error {
 	return nil
 }
 
+// Sum returns the hex-encoded SHA-256 digest of the bytes written. It returns
+// "" until [Writer.Close] has been called.
 func (w *Writer) Sum() string {
 	return w.sum
 }
 
-// NewVerifyReader wraps r and returns an io.Reader that errors on EOF if the
-// streamed bytes do not hash to want. `size` is the expected total length.
+// NewVerifyReader returns an [io.Reader] that reads at most size bytes from r
+// and returns [io.ErrUnexpectedEOF] at the end of the stream if those bytes do
+// not hash to want, a hex-encoded SHA-256 digest.
 func NewVerifyReader(r io.Reader, want string, size int64) io.Reader {
 	return &verifyReader{r: r, want: want, h: sha256.New(), remaining: size}
 }

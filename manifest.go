@@ -8,20 +8,36 @@ import (
 	gosec "github.com/foomo/go/sec"
 )
 
+// ManifestFile describes one named file of a [Manifest].
 type ManifestFile struct {
+	// Name is the slash-separated relative path of the file. It must be
+	// clean and must not escape its root.
 	Name string `msgpack:"name"`
+	// Hash is the hex-encoded SHA-256 digest of the file's bytes.
 	Hash string `msgpack:"hash"`
-	Size int64  `msgpack:"size"`
+	// Size is the file's length in bytes.
+	Size int64 `msgpack:"size"`
 }
 
+// Manifest describes the set of files that make up one [Version]. It is the
+// only payload the maestro protocol carries; file bytes move through a
+// [github.com/foomo/maestro/pkg/blobstore.BlobStore].
 type Manifest struct {
-	Version   Version        `msgpack:"version"`
-	Files     []ManifestFile `msgpack:"files"`
-	TotalSize int64          `msgpack:"total_size"`
+	// Version identifies the content described by Files.
+	Version Version `msgpack:"version"`
+	// Files lists the files of the version, each with a unique Name.
+	Files []ManifestFile `msgpack:"files"`
+	// TotalSize is the sum of every Files[i].Size.
+	TotalSize int64 `msgpack:"total_size"`
 }
 
 const manifestSafeRoot = "/__maestro_root__"
 
+// Validate checks that m is well-formed: it has a non-empty Version and at
+// least one file, every file has a non-empty hash, a non-negative size and a
+// unique, safe name, and TotalSize equals the sum of the file sizes.
+// It returns an error wrapping [ErrManifestMismatch], and additionally
+// [ErrUnsafeName] when a file name fails the path-safety check.
 func (m Manifest) Validate() error {
 	if len(m.Files) == 0 {
 		return fmt.Errorf("%w: no files", ErrManifestMismatch)

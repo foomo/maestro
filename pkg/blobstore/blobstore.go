@@ -1,9 +1,3 @@
-// Package blobstore defines the pluggable byte-transfer layer used by
-// maestro. [BlobStore] is the writer-side surface (used by
-// [github.com/foomo/maestro/pkg/soloist.Soloist]); [BlobReader] is the
-// read-only subset used by [github.com/foomo/maestro/pkg/player.Player].
-// See [github.com/foomo/maestro/pkg/blobstore/localfs] for the in-box
-// filesystem-backed implementation.
 package blobstore
 
 import (
@@ -27,8 +21,15 @@ import (
 // Reader-side access is exposed by [BlobReader] and consumed by the Player.
 // Implementations are free to satisfy both interfaces on a single type.
 type BlobStore interface {
+	// Writer returns a writer that stages the bytes of file name under the
+	// staging label v. The file is stored once the writer is closed.
 	Writer(ctx context.Context, v maestro.Version, name string) (io.WriteCloser, error)
+	// Finalize promotes the files staged under v to the version m.Version and
+	// records m. It must be atomic: readers see all files or none.
 	Finalize(ctx context.Context, v maestro.Version, m maestro.Manifest) error
+	// Stat returns the hex-encoded SHA-256 digest and size of file name in
+	// version v.
 	Stat(ctx context.Context, v maestro.Version, name string) (sha256 string, size int64, err error)
+	// Delete removes every artifact of version v.
 	Delete(ctx context.Context, v maestro.Version) error
 }

@@ -11,10 +11,14 @@ import (
 
 // RosterEntry captures the soloist's view of one player as of LastSeen.
 type RosterEntry struct {
-	InstanceID     string
+	// InstanceID identifies the player.
+	InstanceID string
+	// CurrentVersion is the version the player reported as active.
 	CurrentVersion maestro.Version
-	GenAcked       int64
-	LastSeen       time.Time
+	// GenAcked is the generation the player reported as acknowledged.
+	GenAcked int64
+	// LastSeen is when the soloist received the player's last heartbeat.
+	LastSeen time.Time
 	// Wired reports whether the player's round subscriptions were established
 	// as of its last heartbeat. A player that is alive but not wired is a real
 	// roster member — tracked, and resynced once it is ready — but it cannot

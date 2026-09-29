@@ -1,19 +1,3 @@
-// Package transport provides typed publish/subscribe bundles for the maestro
-// protocol.  All message types are carried by goflux Publishers/Subscribers
-// constructed over the goflux/transport/nats package — no raw nats.Conn handling
-// leaks into Soloist or Player.
-//
-// Callers wire the bundle once at startup:
-//
-//	nc, _ := nats.Connect(url)
-//	tr := transport.NewTransport(nc)
-//	sol, _ := soloist.New(soloist.Options{Transport: tr, ...})
-//
-// On a NATS cluster shared with other services, scope the deployment's
-// subjects with a prefix. Soloist and Player both take their subject
-// layout from the Transport, so this is the only place it is set:
-//
-//	tr, err := transport.NewTransportWithPrefix(nc, "catalogue.maestro")
 package transport
 
 import (
@@ -28,10 +12,13 @@ import (
 // invoke only their role-appropriate direction. Publishers are unbound — the
 // caller binds them per-round at runtime.
 type Transport struct {
+	// Soloist-to-player broadcasts.
 	CanCommit goflux.Topic[CanCommit]
 	PreCommit goflux.Topic[PreCommit]
 	DoCommit  goflux.Topic[DoCommit]
 	Abort     goflux.Topic[Abort]
+
+	// Player-to-soloist messages.
 	Heartbeat goflux.Topic[Heartbeat]
 	Vote      goflux.Topic[Vote]
 	Staged    goflux.Topic[Staged]
@@ -47,7 +34,7 @@ type Transport struct {
 }
 
 // NewTransport constructs the maestro pub/sub bundle over the given
-// *nats.Conn using the unprefixed subject layout.  The caller retains
+// *nats.Conn using the unprefixed subject layout. The caller retains
 // ownership of nc and must Close it.
 func NewTransport(nc *nats.Conn, opts ...natsgoflux.Option) Transport {
 	return newTransport(nc, Subjects{}, opts...)

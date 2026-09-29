@@ -103,16 +103,17 @@ func (a *Aggregator[T]) Wait(ctx context.Context) (map[string]T, error) {
 	}
 }
 
-// Per-message-type convenience constructors.
-
+// NewVoteAggregator is [NewAggregator] for [Vote] replies.
 func NewVoteAggregator(ctx context.Context, sub goflux.BoundSubscriber[Vote], expected []string, keyOf func(Vote) string) (*Aggregator[Vote], error) {
 	return NewAggregator[Vote](ctx, sub, expected, keyOf)
 }
 
+// NewStagedAggregator is [NewAggregator] for [Staged] replies.
 func NewStagedAggregator(ctx context.Context, sub goflux.BoundSubscriber[Staged], expected []string, keyOf func(Staged) string) (*Aggregator[Staged], error) {
 	return NewAggregator[Staged](ctx, sub, expected, keyOf)
 }
 
+// NewCommittedAggregator is [NewAggregator] for [Committed] replies.
 func NewCommittedAggregator(ctx context.Context, sub goflux.BoundSubscriber[Committed], expected []string, keyOf func(Committed) string) (*Aggregator[Committed], error) {
 	return NewAggregator[Committed](ctx, sub, expected, keyOf)
 }
