@@ -12,8 +12,10 @@ import (
 	"time"
 
 	testingx "github.com/foomo/go/testing"
+	"github.com/foomo/goflux"
 	"github.com/foomo/maestro"
 	"github.com/foomo/maestro/internal/testutil"
+	"github.com/foomo/maestro/pkg/blobstore"
 	"github.com/foomo/maestro/pkg/blobstore/localfs"
 	"github.com/foomo/maestro/pkg/player"
 	"github.com/foomo/maestro/pkg/soloist"
@@ -296,4 +298,219 @@ func TestPlayerResyncFromStaleBoot(t *testing.T) {
 	go pl.Start(pCtx) //nolint:errcheck
 
 	testingx.WaitFor(t, 5*time.Second, func() bool { return pl.CurrentVersion() == v })
+}
+
+// gateReader fails every Reader call with a connection-refused-style error
+// until open is set, then delegates to inner.
+type gateReader struct {
+	inner blobstore.BlobReader
+	open  atomic.Bool
+	calls atomic.Int32
+}
+
+func (g *gateReader) Reader(ctx context.Context, v maestro.Version, name string) (io.ReadCloser, int64, error) {
+	g.calls.Add(1)
+
+	if !g.open.Load() {
+		return nil, 0, errors.New("dial tcp: connect: connection refused")
+	}
+
+	return g.inner.Reader(ctx, v, name)
+}
+
+func TestPlayerPreCommitOutlastsBlobOutage(t *testing.T) {
+	url := testutil.StartNATS(t)
+	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
+
+	s, err := soloist.New(soloist.Options{
+		Transport:       transport.NewTransport(dialNATS(t, url)),
+		BlobStore:       bs,
+		InstanceID:      "soloist-outage",
+		HeartbeatWindow: 5 * time.Second,
+		RosterScanTick:  100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go s.Start(t.Context()) //nolint:errcheck
+
+	testingx.WaitFor(t, 2*time.Second, func() bool { return s.Ready() })
+
+	gate := &gateReader{inner: bs}
+	h := newDummyHandler()
+
+	pl, err := player.New(player.Options{
+		Transport:       transport.NewTransport(dialNATS(t, url)),
+		BlobReader:      gate,
+		InstanceID:      "p1",
+		HeartbeatPeriod: 50 * time.Millisecond,
+		StageHandler:    h,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go pl.Start(t.Context()) //nolint:errcheck
+
+	testingx.WaitFor(t, 2*time.Second, func() bool { return pl.Wired() })
+	time.Sleep(200 * time.Millisecond) // let first heartbeat land in roster
+
+	// Blob source comes back 1.5s into the round — well past the old ~0.3s
+	// retry budget, well inside the soloist's stage timeout.
+	time.AfterFunc(1500*time.Millisecond, func() { gate.open.Store(true) })
+
+	v, err := s.Publish(t.Context(), []soloist.File{{Name: "doc.bin", Reader: strings.NewReader("hello")}})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	testingx.WaitFor(t, 5*time.Second, func() bool { return pl.CurrentVersion() == v })
+
+	if got := gate.calls.Load(); got <= 3 {
+		t.Errorf("Reader calls = %d, want > 3 (retried through the outage)", got)
+	}
+
+	if cur := h.Current(); cur["doc.bin"] != "hello" {
+		t.Errorf("body %q", cur["doc.bin"])
+	}
+}
+
+// roundDriver plays the soloist side of a round by hand against one player.
+type roundDriver struct {
+	t      *testing.T
+	tr     transport.Transport
+	man    maestro.Manifest
+	staged chan transport.Staged
+}
+
+func newRoundDriver(t *testing.T, url string, man maestro.Manifest) *roundDriver {
+	t.Helper()
+
+	rd := &roundDriver{t: t, tr: transport.NewTransport(dialNATS(t, url)), man: man, staged: make(chan transport.Staged, 8)}
+
+	ready := make(chan struct{})
+
+	go goflux.SubscribeWithReady(t.Context(), rd.tr.Staged.Subscriber, rd.tr.Subjects.RoundStaged("*"), //nolint:errcheck
+		func(_ context.Context, m goflux.Message[transport.Staged]) error {
+			rd.staged <- m.Payload
+			return nil
+		}, func() { close(ready) })
+
+	<-ready
+
+	return rd
+}
+
+// open sends CanCommit then PreCommit for rid with the given deadline.
+func (rd *roundDriver) open(rid string, deadline int64) {
+	rd.t.Helper()
+
+	ctx := rd.t.Context()
+	if err := rd.tr.CanCommit.Publish(ctx, rd.tr.Subjects.RoundCanCommit(rid), transport.CanCommit{
+		RoundID: rid, Target: rd.man.Version, Manifest: rd.man,
+	}); err != nil {
+		rd.t.Fatal(err)
+	}
+
+	// CanCommit and PreCommit ride separate subscriptions; give CanCommit a
+	// head start so its manifest is pending when PreCommit lands.
+	time.Sleep(100 * time.Millisecond)
+
+	if err := rd.tr.PreCommit.Publish(ctx, rd.tr.Subjects.RoundPreCommit(rid), transport.PreCommit{
+		RoundID: rid, Target: rd.man.Version, DeadlineUnixMs: deadline,
+	}); err != nil {
+		rd.t.Fatal(err)
+	}
+}
+
+// waitStaged returns the Staged reply for rid, failing after within.
+func (rd *roundDriver) waitStaged(rid string, within time.Duration) transport.Staged {
+	rd.t.Helper()
+
+	timeout := time.After(within)
+
+	for {
+		select {
+		case st := <-rd.staged:
+			if st.RoundID == rid {
+				return st
+			}
+		case <-timeout:
+			rd.t.Fatalf("no Staged for %s within %v", rid, within)
+		}
+	}
+}
+
+func startGatedPlayer(t *testing.T, url string) (*gateReader, maestro.Manifest) {
+	t.Helper()
+
+	bs, _ := localfs.NewStore(localfs.Config{DataDir: t.TempDir()})
+
+	man, err := soloist.IngestFile(t.Context(), bs, "doc.bin", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gate := &gateReader{inner: bs}
+
+	pl, err := player.New(player.Options{
+		Transport:       transport.NewTransport(dialNATS(t, url)),
+		BlobReader:      gate,
+		InstanceID:      "p1",
+		HeartbeatPeriod: 50 * time.Millisecond,
+		StageHandler:    newDummyHandler(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go pl.Start(t.Context()) //nolint:errcheck
+
+	testingx.WaitFor(t, 2*time.Second, func() bool { return pl.Wired() })
+
+	return gate, man
+}
+
+func TestPlayerAbortCancelsInflightPreCommit(t *testing.T) {
+	url := testutil.StartNATS(t)
+	gate, man := startGatedPlayer(t, url)
+	rd := newRoundDriver(t, url, man)
+
+	rd.open("r1", time.Now().Add(time.Minute).UnixMilli())
+	testingx.WaitFor(t, 2*time.Second, func() bool { return gate.calls.Load() > 0 })
+
+	if err := rd.tr.Abort.Publish(t.Context(), rd.tr.Subjects.RoundAbort("r1"), transport.Abort{
+		RoundID: "r1", Reason: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if st := rd.waitStaged("r1", 2*time.Second); st.OK {
+		t.Fatalf("r1 staged OK after abort: %+v", st)
+	}
+
+	// The next round must not queue behind r1's old deadline.
+	gate.open.Store(true)
+	rd.open("r2", time.Now().Add(time.Minute).UnixMilli())
+
+	if st := rd.waitStaged("r2", 3*time.Second); !st.OK {
+		t.Fatalf("r2 staged: %+v", st)
+	}
+}
+
+func TestPlayerPreCommitZeroDeadline(t *testing.T) {
+	url := testutil.StartNATS(t)
+	gate, man := startGatedPlayer(t, url)
+	rd := newRoundDriver(t, url, man)
+
+	rd.open("r1", 0)
+
+	if st := rd.waitStaged("r1", 3*time.Second); st.OK {
+		t.Fatalf("r1 staged OK with blob source down: %+v", st)
+	}
+
+	if got := gate.calls.Load(); got != 3 {
+		t.Errorf("Reader calls = %d, want 3 (bounded retry without deadline)", got)
+	}
 }

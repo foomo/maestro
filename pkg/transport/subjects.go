@@ -101,22 +101,45 @@ func (s Subjects) PlayerHeartbeat() string {
 // RoundWildcard matches every subject of every round.
 func (s Subjects) RoundWildcard() string { return s.prefix + segmentRound + ".>" }
 
-// RoundCanCommitWildcard and its siblings are the per-phase wildcards
-// players use to subscribe across all rounds.
+// RoundCanCommitWildcard matches the CanCommit subject of every round.
+// Players subscribe to it and its siblings to receive all rounds.
 func (s Subjects) RoundCanCommitWildcard() string { return s.roundWildcard("can_commit") }
+
+// RoundPreCommitWildcard matches the PreCommit subject of every round.
 func (s Subjects) RoundPreCommitWildcard() string { return s.roundWildcard("pre_commit") }
-func (s Subjects) RoundDoCommitWildcard() string  { return s.roundWildcard("do_commit") }
-func (s Subjects) RoundAbortWildcard() string     { return s.roundWildcard("abort") }
 
-// Per-round subject builders.
+// RoundDoCommitWildcard matches the DoCommit subject of every round.
+func (s Subjects) RoundDoCommitWildcard() string { return s.roundWildcard("do_commit") }
 
+// RoundAbortWildcard matches the Abort subject of every round.
+func (s Subjects) RoundAbortWildcard() string { return s.roundWildcard("abort") }
+
+// RoundCanCommit returns the subject the soloist broadcasts [CanCommit] on
+// for round rid.
 func (s Subjects) RoundCanCommit(rid string) string { return s.round(rid, "can_commit") }
-func (s Subjects) RoundVote(rid string) string      { return s.round(rid, "vote") }
+
+// RoundVote returns the subject players send [Vote] replies on for round rid.
+func (s Subjects) RoundVote(rid string) string { return s.round(rid, "vote") }
+
+// RoundPreCommit returns the subject the soloist broadcasts [PreCommit] on
+// for round rid.
 func (s Subjects) RoundPreCommit(rid string) string { return s.round(rid, "pre_commit") }
-func (s Subjects) RoundStaged(rid string) string    { return s.round(rid, "staged") }
-func (s Subjects) RoundDoCommit(rid string) string  { return s.round(rid, "do_commit") }
+
+// RoundStaged returns the subject players send [Staged] replies on for round
+// rid.
+func (s Subjects) RoundStaged(rid string) string { return s.round(rid, "staged") }
+
+// RoundDoCommit returns the subject the soloist broadcasts [DoCommit] on for
+// round rid.
+func (s Subjects) RoundDoCommit(rid string) string { return s.round(rid, "do_commit") }
+
+// RoundCommitted returns the subject players send [Committed] replies on for
+// round rid.
 func (s Subjects) RoundCommitted(rid string) string { return s.round(rid, "committed") }
-func (s Subjects) RoundAbort(rid string) string     { return s.round(rid, "abort") }
+
+// RoundAbort returns the subject the soloist broadcasts [Abort] on for round
+// rid.
+func (s Subjects) RoundAbort(rid string) string { return s.round(rid, "abort") }
 
 // RIDFromSubject extracts the round id from a subject this Subjects
 // would have produced. Returns "" when subject does not belong to this

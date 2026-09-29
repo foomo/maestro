@@ -1,9 +1,3 @@
-// Package localfs is a filesystem-backed
-// [github.com/foomo/maestro/pkg/blobstore.BlobStore] /
-// [github.com/foomo/maestro/pkg/blobstore.BlobReader] implementation. A
-// [Store] stages files under a temporary label, then atomically promotes
-// them to a version-addressed directory on Finalize; [Store.Handler]
-// serves finalized files over HTTP for remote [Client] consumers.
 package localfs
 
 import (
@@ -29,10 +23,10 @@ var (
 	_ blobstore.BlobReader = (*Store)(nil)
 )
 
-// Config configures the localfs BlobStore.
-//
-//   - DataDir: root directory for staging + versioned files.
+// Config configures a [Store].
 type Config struct {
+	// DataDir is the root directory for staged and versioned files.
+	// Required.
 	DataDir string
 }
 

@@ -51,8 +51,10 @@ abort a publish for its peers.
 
 ## Errors
 
-Sentinel errors defined in the root `maestro` package (`errors.go`),
-returned wrapped via `%w` from the relevant call sites:
+Sentinel errors defined in the root `maestro` package (`errors.go`).
+Call sites wrap them via `%w`; match with `errors.Is`. Only `ErrAbort`,
+`ErrManifestMismatch` and `ErrUnsafeName` are returned by maestro itself;
+the others are reserved and never returned.
 
 | Error | Meaning |
 |---|---|

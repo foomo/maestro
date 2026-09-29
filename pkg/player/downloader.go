@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/foomo/maestro/internal/hashio"
 	"github.com/foomo/maestro/pkg/blobstore"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // downloader fetches files for a Manifest from a BlobReader, serializing reads
@@ -44,26 +46,38 @@ func newDownloader(bs blobstore.BlobReader, v maestro.Version, m maestro.Manifes
 }
 
 // prefetch runs in parallel up to `conc`, downloading + verifying each file
-// with up-to-3-attempt retry on transient errors (HTTP 5xx, conn reset,
-// hash mismatch from a corrupted read). Returns the joined error on failure.
+// with retry on errors (HTTP 5xx, conn refused/reset, hash mismatch from a
+// corrupted read). If ctx carries a deadline, each file is retried until it
+// expires, so a blob source that is briefly unreachable (e.g. a restarting
+// soloist host) is waited out; without one, it's up to 3 attempts. Returns the
+// joined error on failure.
 func (d *downloader) prefetch(ctx context.Context) error {
 	results := make([][]byte, len(d.man.Files))
+
+	attempts := 3
+	if _, ok := ctx.Deadline(); ok {
+		attempts = math.MaxInt32
+	}
 
 	g := gofuncy.NewGroup(ctx,
 		gofuncy.WithName("maestro.player.prefetch"),
 		gofuncy.WithLimit(d.conc),
 		gofuncy.WithFailFast(),
-		gofuncy.WithRetry(3, gofuncy.RetryBackoff(
-			gofuncy.BackoffExponential(100*time.Millisecond, 2, 2*time.Second),
+		gofuncy.WithRetry(attempts, gofuncy.RetryBackoff(
+			gofuncy.BackoffExponential(250*time.Millisecond, 2, 2*time.Second),
 		)),
 	)
 
 	for i := range d.man.Files {
 		mf := d.man.Files[i]
+		// Only the first failure per file logs at Warn; retries log at Debug so
+		// an outage spanning the whole deadline doesn't flood the log.
+		lvl := zap.WarnLevel
 
 		g.Add(func(ctx context.Context) error {
-			body, ferr := d.fetchOne(ctx, mf)
+			body, ferr := d.fetchOne(ctx, mf, lvl)
 			if ferr != nil {
+				lvl = zap.DebugLevel
 				return ferr
 			}
 
@@ -86,10 +100,10 @@ func (d *downloader) prefetch(ctx context.Context) error {
 	return nil
 }
 
-func (d *downloader) fetchOne(ctx context.Context, mf maestro.ManifestFile) ([]byte, error) {
+func (d *downloader) fetchOne(ctx context.Context, mf maestro.ManifestFile, lvl zapcore.Level) ([]byte, error) {
 	r, _, err := d.bs.Reader(ctx, d.v, mf.Name)
 	if err != nil {
-		d.l.Warn("blob fetch failed",
+		d.l.Log(lvl, "blob fetch failed",
 			zap.String("version", string(d.v)),
 			zap.String("name", mf.Name),
 			zap.Error(err),
@@ -103,7 +117,7 @@ func (d *downloader) fetchOne(ctx context.Context, mf maestro.ManifestFile) ([]b
 
 	body, err := io.ReadAll(vr)
 	if err != nil {
-		d.l.Warn("blob verify failed",
+		d.l.Log(lvl, "blob verify failed",
 			zap.String("version", string(d.v)),
 			zap.String("name", mf.Name),
 			zap.Error(err),

@@ -153,7 +153,7 @@ func (h *myHandler) Current() *Catalog { return h.cur.Load() }
 Notes:
 
 - Returning an error from `Stage` votes against the round.
-- `FileSource.Open` returns a stream whose bytes are sha256-verified against the manifest as you read. Do not re-hash.
+- `FileSource.Open` returns bytes already sha256-verified against the manifest before `Stage` runs. Do not re-hash.
 - `Abort` may fire for a version that never staged successfully — treat as a no-op.
 
 ### 2. Wire a Player into a foomo/keel server

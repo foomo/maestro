@@ -13,7 +13,9 @@ import (
 
 // File is a single named blob to ingest.
 type File struct {
-	Name   string
+	// Name is the file's relative path within the version.
+	Name string
+	// Reader supplies the file's bytes. It is read to EOF.
 	Reader io.Reader
 }
 

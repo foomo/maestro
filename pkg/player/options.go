@@ -21,13 +21,31 @@ type Options struct {
 	// writes; callers should pass a read-only client (e.g. localfs.NewClient).
 	BlobReader blobstore.BlobReader
 
-	InstanceID          string
-	HeartbeatPeriod     time.Duration
+	// InstanceID identifies the player in the soloist's roster. Use a stable
+	// identity such as the pod hostname, not a per-boot random value.
+	InstanceID string
+
+	// HeartbeatPeriod is the interval between heartbeats. Defaults to 5s.
+	HeartbeatPeriod time.Duration
+
+	// DownloadConcurrency is the number of blobs fetched in parallel while
+	// staging a version. Defaults to 4.
 	DownloadConcurrency int
-	StageHandler        StageHandler
-	MeterProvider       metric.MeterProvider
-	TracerProvider      trace.TracerProvider
-	Logger              *zap.Logger
+
+	// StageHandler builds and activates the application's artifact for each
+	// version. Required.
+	StageHandler StageHandler
+
+	// MeterProvider provides the OpenTelemetry meter. Defaults to
+	// otel.GetMeterProvider().
+	MeterProvider metric.MeterProvider
+
+	// TracerProvider provides the OpenTelemetry tracer. Defaults to
+	// otel.GetTracerProvider().
+	TracerProvider trace.TracerProvider
+
+	// Logger receives the player's logs. Defaults to a no-op logger.
+	Logger *zap.Logger
 }
 
 func (o *Options) applyDefaults() {
