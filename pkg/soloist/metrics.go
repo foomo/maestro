@@ -27,11 +27,12 @@ const meterName = "github.com/foomo/maestro/pkg/soloist"
 type metrics struct {
 	rounds        metric.Int64Counter
 	phaseDuration metric.Float64Histogram
-	rosterPlayers metric.Int64Gauge
 	servedVersion metric.Int64Counter
 }
 
-func newMetrics(mp metric.MeterProvider) (*metrics, error) {
+// newMetrics registers the soloist's instruments. players is called on every
+// collection to report the current roster size.
+func newMetrics(mp metric.MeterProvider, players func() int) (*metrics, error) {
 	m := mp.Meter(meterName)
 
 	rounds, err := m.Int64Counter("maestro.publish.rounds",
@@ -50,11 +51,25 @@ func newMetrics(mp metric.MeterProvider) (*metrics, error) {
 		return nil, err
 	}
 
-	rosterPlayers, err := m.Int64Gauge("maestro.roster.players",
-		metric.WithDescription("Players in the roster at the start of a round."),
+	// maestro.roster.players reports how many players the roster holds right
+	// now, counting only those wired for rounds. It is observed on every
+	// collection rather than recorded per round: resync rounds and an idle
+	// soloist never publish, and a per-publish value would read whatever the
+	// last Publish saw, however long ago. Joins, departures and heartbeat
+	// expiry therefore show up within one collection interval.
+	//
+	// Worth watching alongside publish outcomes because players that are alive but
+	// still starting up are excluded from the expected set: players stuck in a
+	// crash-loop can leave this near zero while the outcome counter reports
+	// nothing but successes.
+	if _, err := m.Int64ObservableGauge("maestro.roster.players",
+		metric.WithDescription("Players in the roster wired for rounds."),
 		metric.WithUnit("{player}"),
-	)
-	if err != nil {
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(players()))
+			return nil
+		}),
+	); err != nil {
 		return nil, err
 	}
 
@@ -69,7 +84,6 @@ func newMetrics(mp metric.MeterProvider) (*metrics, error) {
 	return &metrics{
 		rounds:        rounds,
 		phaseDuration: phaseDuration,
-		rosterPlayers: rosterPlayers,
 		servedVersion: servedVersion,
 	}, nil
 }
@@ -95,21 +109,6 @@ func (m *metrics) recordPhase(ctx context.Context, phase string, d time.Duration
 
 	m.phaseDuration.Record(ctx, d.Seconds(),
 		metric.WithAttributes(semconv.AttrPublishPhase.String(phase)))
-}
-
-// recordRoster records how many players a round started with, counting only
-// those wired for rounds.
-//
-// Worth watching alongside publish outcomes because players that are alive but
-// still starting up are excluded from the expected set: players stuck in a
-// crash-loop can leave this near zero while the outcome counter reports
-// nothing but successes.
-func (m *metrics) recordRoster(ctx context.Context, players int) {
-	if m == nil {
-		return
-	}
-
-	m.rosterPlayers.Record(ctx, int64(players))
 }
 
 // recordCommitted counts a version the soloist adopted as current.

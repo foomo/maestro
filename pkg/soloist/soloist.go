@@ -58,10 +58,11 @@ func New(opts Options) (*Soloist, error) {
 	}
 
 	l := opts.Logger.Named("maestro.soloist")
+	roster := NewRoster(opts.HeartbeatWindow, l.Named("roster"))
 
 	// Instrumentation must not be a reason a soloist fails to start: a
 	// nil *metrics records nothing and every call site tolerates it.
-	m, err := newMetrics(opts.MeterProvider)
+	m, err := newMetrics(opts.MeterProvider, func() int { return len(roster.Participants()) })
 	if err != nil {
 		l.Warn("metrics unavailable; continuing uninstrumented", zap.Error(err))
 
@@ -73,7 +74,7 @@ func New(opts Options) (*Soloist, error) {
 		tr:        opts.Transport,
 		l:         l,
 		bootEpoch: time.Now().UnixMilli(),
-		roster:    NewRoster(opts.HeartbeatWindow, l.Named("roster")),
+		roster:    roster,
 		metrics:   m,
 	}, nil
 }
@@ -198,8 +199,6 @@ func (s *Soloist) commitManifest(ctx context.Context, m maestro.Manifest) error 
 	// their round subscriptions cannot vote, and counting them would abort
 	// this round for everyone. They are resynced by the monitor once ready.
 	rosterSnap := s.roster.Participants()
-
-	s.metrics.recordRoster(ctx, len(rosterSnap))
 
 	if len(rosterSnap) == 0 {
 		// An empty roster and a roster of only starting-up players are not
